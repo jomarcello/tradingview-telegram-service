@@ -15,13 +15,17 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+# Add file handler for debugging
+file_handler = logging.FileHandler('telegram_bot.log')
+file_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -292,21 +296,24 @@ async def send_signal(message: SignalMessage):
     try:
         logger.info(f"Received signal request for chat_id: {message.chat_id}")
         logger.info(f"Signal data: {message.signal_data}")
+        logger.info(f"News data: {message.news_data}")
         
         # Format signal
         logger.info("Formatting signal...")
         signal_text = await format_signal(message.signal_data)
-        logger.info("Signal formatted successfully")
+        logger.info(f"Signal formatted successfully: {signal_text}")
         
         # Get news analysis
         news_analysis = None
-        if message.signal_data.get("news"):
+        if message.news_data and message.news_data.get("articles"):
             logger.info("Getting news analysis...")
             news_analysis = await get_news_analysis(
                 message.signal_data["instrument"],
-                message.signal_data["news"]
+                message.news_data["articles"]
             )
             logger.info(f"News analysis completed: {news_analysis}")
+        else:
+            logger.warning("No news data or articles provided")
         
         # Store in user state
         user_states[message.chat_id] = {
@@ -315,7 +322,7 @@ async def send_signal(message: SignalMessage):
                 "analysis": f"📊 *Market Sentiment Analysis*\n\n"
                            f"Based on recent news and market data for {message.signal_data['instrument']}:\n\n"
                            f"{news_analysis['analysis'] if news_analysis else 'No market sentiment analysis available at this time.'}"
-            }
+            } if news_analysis else None
         }
         logger.info(f"User state updated for chat_id {message.chat_id}: {user_states[message.chat_id]}")
         
