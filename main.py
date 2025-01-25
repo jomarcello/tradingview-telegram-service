@@ -73,6 +73,7 @@ async def on_startup():
     asyncio.create_task(start_bot())
 
 class SignalMessage(BaseModel):
+    """Signal message model"""
     chat_id: int
     signal_data: Dict[str, Any]
     news_data: Optional[Dict[str, Any]] = None
@@ -82,6 +83,7 @@ async def format_signal(signal_data: Dict[str, Any]) -> str:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             logger.info(f"Sending request to Signal AI Service: {SIGNAL_AI_SERVICE}")
+            logger.info(f"Request data: {signal_data}")
             response = await client.post(
                 f"{SIGNAL_AI_SERVICE}/format-signal",
                 json=signal_data
@@ -89,7 +91,9 @@ async def format_signal(signal_data: Dict[str, Any]) -> str:
             if response.status_code != 200:
                 logger.error(f"Signal AI Service returned status code {response.status_code}: {response.text}")
                 raise HTTPException(status_code=response.status_code, detail=f"Error formatting signal: {response.text}")
-            return response.json()["formatted_message"]
+            result = response.json()
+            logger.info(f"Signal formatting result: {result}")
+            return result["formatted_message"]
     except httpx.TimeoutException:
         logger.error("Timeout while connecting to Signal AI Service")
         raise HTTPException(status_code=504, detail="Signal AI Service timeout")
@@ -102,14 +106,20 @@ async def get_news_analysis(instrument: str, articles: list) -> Dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             logger.info(f"Sending request to News AI Service: {NEWS_AI_SERVICE}")
+            logger.info(f"Request data: instrument={instrument}, articles={articles}")
+            
             response = await client.post(
                 f"{NEWS_AI_SERVICE}/analyze-news",
                 json={"instrument": instrument, "articles": articles}
             )
+            
             if response.status_code != 200:
                 logger.error(f"News AI Service returned status code {response.status_code}: {response.text}")
                 raise HTTPException(status_code=response.status_code, detail=f"Error analyzing news: {response.text}")
-            return response.json()
+            
+            result = response.json()
+            logger.info(f"News analysis result: {result}")
+            return result
     except httpx.TimeoutException:
         logger.error("Timeout while connecting to News AI Service")
         raise HTTPException(status_code=504, detail="News AI Service timeout")
@@ -152,12 +162,19 @@ async def telegram_webhook(request: Request):
         logger.info(f"Received callback query: {callback_data} from chat_id: {chat_id}")
         
         if callback_data == "sentiment":
+            logger.info(f"Handling sentiment callback for chat_id: {chat_id}")
+            logger.info(f"User states: {user_states}")
+            
             if chat_id not in user_states:
+                logger.error(f"Chat ID {chat_id} not found in user_states")
                 await query.answer("Session expired. Please request a new signal.")
                 return {"status": "error", "message": "Session expired"}
             
             news_data = user_states[chat_id].get("news_data")
+            logger.info(f"News data for chat_id {chat_id}: {news_data}")
+            
             if not news_data:
+                logger.error(f"No news data available for chat_id {chat_id}")
                 await query.answer("No news analysis available.")
                 return {"status": "error", "message": "No news analysis available"}
             
@@ -165,15 +182,22 @@ async def telegram_webhook(request: Request):
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=news_data["analysis"],
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-            await query.answer()
-            
+            try:
+                sentiment_text = news_data.get("analysis", "No analysis available")
+                logger.info(f"Sending sentiment analysis: {sentiment_text}")
+                
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=sentiment_text,
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+                await query.answer()
+            except Exception as e:
+                logger.error(f"Error sending sentiment analysis: {str(e)}")
+                await query.answer("Error displaying sentiment analysis")
+                
         elif callback_data == "technical":
             # Create keyboard with back button
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
