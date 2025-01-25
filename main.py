@@ -13,11 +13,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI()
+app = FastAPI(title="Telegram Service", description="Service for sending trading signals via Telegram")
 
 # Initialize Telegram bot
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
