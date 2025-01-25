@@ -34,7 +34,7 @@ SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-a
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
 
 # Initialize bot application
-application = Application.builder().token(BOT_TOKEN).build()
+bot = Application.builder().token(BOT_TOKEN).build()
 
 # Store user states (for back button functionality)
 user_states: Dict[int, Dict[str, Any]] = {}
@@ -76,7 +76,7 @@ async def send_initial_message(chat_id: int, signal_text: str) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await application.bot.send_message(
+    await bot.bot.send_message(
         chat_id=chat_id,
         text=signal_text,
         reply_markup=reply_markup,
@@ -155,10 +155,18 @@ async def send_signal(message: SignalMessage):
         # Format signal
         signal_text = await format_signal(message.signal_data)
         
+        # Get news analysis if provided
+        news_analysis = None
+        if message.news_data:
+            news_analysis = await get_news_analysis(
+                message.news_data["instrument"],
+                message.news_data["articles"]
+            )
+        
         # Store in user state
         user_states[message.chat_id] = {
             "signal_text": signal_text,
-            "news_data": message.news_data
+            "news_data": news_analysis
         }
         
         # Send initial message with options
@@ -171,9 +179,19 @@ async def send_signal(message: SignalMessage):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Register callback handlers
-application.add_handler(CallbackQueryHandler(handle_sentiment_callback, pattern="^sentiment$"))
-application.add_handler(CallbackQueryHandler(handle_technical_callback, pattern="^technical$"))
-application.add_handler(CallbackQueryHandler(handle_back_callback, pattern="^back$"))
+bot.add_handler(CallbackQueryHandler(handle_sentiment_callback, pattern="^sentiment$"))
+bot.add_handler(CallbackQueryHandler(handle_technical_callback, pattern="^technical$"))
+bot.add_handler(CallbackQueryHandler(handle_back_callback, pattern="^back$"))
 
-# Start the bot
-application.run_polling()
+# Start the bot in the background
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+def run_bot():
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    bot.run_polling()
+
+import threading
+thread = threading.Thread(target=run_bot)
+thread.daemon = True  # Set as daemon so it exits when main thread exits
+thread.start()
