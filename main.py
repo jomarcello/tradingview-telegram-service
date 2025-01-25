@@ -42,12 +42,39 @@ if not BOT_TOKEN:
 # Service URLs
 SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://tradingview-telegram-service-production.up.railway.app/webhook")
 
-# Initialize bot and application
+# Initialize bot
 bot = Bot(token=BOT_TOKEN)
 
 # Store user states (for back button functionality)
 user_states: Dict[int, Dict[str, Any]] = {}
+
+@app.on_event("startup")
+async def startup_event():
+    """Set webhook on startup"""
+    try:
+        logger.info(f"Setting webhook to: {WEBHOOK_URL}")
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url != WEBHOOK_URL:
+            await bot.delete_webhook()
+            await bot.set_webhook(url=WEBHOOK_URL)
+            logger.info("Webhook set successfully")
+        else:
+            logger.info("Webhook already set correctly")
+    except Exception as e:
+        logger.error(f"Error setting webhook: {e}")
+        raise
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Remove webhook on shutdown"""
+    try:
+        logger.info("Removing webhook")
+        await bot.delete_webhook()
+        logger.info("Webhook removed successfully")
+    except Exception as e:
+        logger.error(f"Error removing webhook: {e}")
 
 # Command handlers
 async def start_command(update: Update, context: CallbackContext) -> None:
