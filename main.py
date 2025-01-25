@@ -6,8 +6,7 @@ from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext
-from dotenv import load_dotenv
+from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +39,37 @@ bot = Bot(token=BOT_TOKEN)
 
 # Store user states (for back button functionality)
 user_states: Dict[int, Dict[str, Any]] = {}
+
+# Command handlers
+async def start_command(update: Update, context: CallbackContext) -> None:
+    """Send a message when the command /start is issued."""
+    user = update.effective_user
+    welcome_message = (
+        f"Welcome {user.first_name}! 🚀\n\n"
+        "I'm your SigmaPips trading assistant. I'll send you real-time trading signals "
+        "with detailed market analysis and news updates.\n\n"
+        "Stay tuned for the next trading opportunity! 📈"
+    )
+    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+
+# Setup handlers
+application = Application.builder().token(BOT_TOKEN).build()
+
+# Add command handlers
+application.add_handler(CommandHandler("start", start_command))
+
+# Start the bot
+async def start_bot():
+    """Start the bot."""
+    await application.initialize()
+    await application.start()
+    await application.run_polling()
+
+@app.on_event("startup")
+async def on_startup():
+    """Start the bot when the FastAPI app starts."""
+    import asyncio
+    asyncio.create_task(start_bot())
 
 class SignalMessage(BaseModel):
     chat_id: int
