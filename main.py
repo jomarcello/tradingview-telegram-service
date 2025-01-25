@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler
+from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -24,7 +24,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Initialize FastAPI app
-app = FastAPI(title="Telegram Service", description="Service for sending trading signals via Telegram")
+app = FastAPI(
+    title="Telegram Service",
+    description="Service for sending trading signals via Telegram",
+    version="1.0.0"
+)
 
 # Initialize Telegram bot
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -35,8 +39,9 @@ if not BOT_TOKEN:
 SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
 
-# Initialize bot
+# Initialize bot and application
 bot = Bot(token=BOT_TOKEN)
+application = Application.builder().token(BOT_TOKEN).build()
 
 # Store user states (for back button functionality)
 user_states: Dict[int, Dict[str, Any]] = {}
@@ -53,24 +58,38 @@ async def start_command(update: Update, context: CallbackContext) -> None:
     )
     await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
-# Setup handlers
-application = Application.builder().token(BOT_TOKEN).build()
-
-# Add command handlers
-application.add_handler(CommandHandler("start", start_command))
-
-# Start the bot
-async def start_bot():
-    """Start the bot."""
-    await application.initialize()
-    await application.start()
-    await application.run_polling()
+async def setup_bot():
+    """Setup bot handlers and start polling in the background"""
+    try:
+        logger.info("Setting up bot handlers...")
+        
+        # Add command handlers
+        application.add_handler(CommandHandler("start", start_command))
+        
+        # Add webhook handler
+        application.add_handler(
+            MessageHandler(filters.ALL, lambda u, c: None)
+        )
+        
+        logger.info("Bot handlers setup complete")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting up bot: {e}")
+        return False
 
 @app.on_event("startup")
-async def on_startup():
-    """Start the bot when the FastAPI app starts."""
-    import asyncio
-    asyncio.create_task(start_bot())
+async def startup_event():
+    """Start the bot when the FastAPI app starts"""
+    try:
+        logger.info("Starting bot setup...")
+        success = await setup_bot()
+        if success:
+            logger.info("Bot setup completed successfully")
+        else:
+            logger.error("Bot setup failed")
+    except Exception as e:
+        logger.error(f"Error during startup: {e}")
+        raise
 
 class SignalMessage(BaseModel):
     """Signal message model"""
@@ -157,9 +176,11 @@ async def telegram_webhook(request: Request):
     """Handle Telegram webhook updates"""
     try:
         data = await request.json()
-        update = Update.de_json(data, bot)
+        logger.info(f"Received webhook data: {data}")
         
-        if not update.callback_query:
+        update = Update.de_json(data, bot)
+        if not update or not update.callback_query:
+            logger.info("No callback query in update")
             return {"status": "success"}
             
         query = update.callback_query
@@ -167,11 +188,11 @@ async def telegram_webhook(request: Request):
         message_id = query.message.message_id
         callback_data = query.data
         
-        logger.info(f"Received callback query: {callback_data} from chat_id: {chat_id}")
+        logger.info(f"Processing callback query: {callback_data} from chat_id: {chat_id}")
+        logger.info(f"Current user states: {user_states}")
         
         if callback_data == "sentiment":
             logger.info(f"Handling sentiment callback for chat_id: {chat_id}")
-            logger.info(f"User states: {user_states}")
             
             if chat_id not in user_states:
                 logger.error(f"Chat ID {chat_id} not found in user_states")
@@ -186,11 +207,10 @@ async def telegram_webhook(request: Request):
                 await query.answer("No news analysis available.")
                 return {"status": "error", "message": "No news analysis available"}
             
-            # Create keyboard with back button
-            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
             try:
+                keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 sentiment_text = news_data.get("analysis", "No analysis available")
                 logger.info(f"Sending sentiment analysis: {sentiment_text}")
                 
@@ -201,17 +221,19 @@ async def telegram_webhook(request: Request):
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
-                await query.answer()
+                await query.answer("Market sentiment analysis loaded")
             except Exception as e:
                 logger.error(f"Error sending sentiment analysis: {str(e)}")
+                logger.exception("Full traceback:")
                 await query.answer("Error displaying sentiment analysis")
+                return {"status": "error", "message": str(e)}
             
         elif callback_data == "technical":
             logger.info("Handling technical analysis callback")
-            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
             try:
+                keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
@@ -219,27 +241,30 @@ async def telegram_webhook(request: Request):
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
-                await query.answer()
+                await query.answer("Technical analysis info loaded")
             except Exception as e:
                 logger.error(f"Error sending technical analysis: {str(e)}")
+                logger.exception("Full traceback:")
                 await query.answer("Error displaying technical analysis")
+                return {"status": "error", "message": str(e)}
             
         elif callback_data == "back":
-            if chat_id not in user_states:
-                logger.error(f"Chat ID {chat_id} not found in user_states for back action")
-                await query.answer("Session expired. Please request a new signal.")
-                return {"status": "error", "message": "Session expired"}
-            
-            signal_text = user_states[chat_id].get("signal_text", "Signal not available")
-            keyboard = [
-                [
-                    InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
-                    InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
+            logger.info("Handling back button callback")
             try:
+                if chat_id not in user_states:
+                    logger.error(f"Chat ID {chat_id} not found in user_states for back action")
+                    await query.answer("Session expired. Please request a new signal.")
+                    return {"status": "error", "message": "Session expired"}
+                
+                signal_text = user_states[chat_id].get("signal_text", "Signal not available")
+                keyboard = [
+                    [
+                        InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
+                        InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
@@ -247,10 +272,12 @@ async def telegram_webhook(request: Request):
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
-                await query.answer()
+                await query.answer("Returned to main menu")
             except Exception as e:
                 logger.error(f"Error handling back action: {str(e)}")
+                logger.exception("Full traceback:")
                 await query.answer("Error returning to main menu")
+                return {"status": "error", "message": str(e)}
         
         return {"status": "success"}
             
