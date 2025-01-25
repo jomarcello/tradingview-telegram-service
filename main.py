@@ -5,13 +5,8 @@ import httpx
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackContext
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -33,8 +28,8 @@ if not BOT_TOKEN:
 SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
 
-# Initialize bot application
-bot = Application.builder().token(BOT_TOKEN).build()
+# Initialize bot
+bot = Bot(token=BOT_TOKEN)
 
 # Store user states (for back button functionality)
 user_states: Dict[int, Dict[str, Any]] = {}
@@ -76,77 +71,76 @@ async def send_initial_message(chat_id: int, signal_text: str) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await bot.bot.send_message(
+    await bot.send_message(
         chat_id=chat_id,
         text=signal_text,
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
 
-async def handle_sentiment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle sentiment button click"""
-    query = update.callback_query
-    chat_id = query.message.chat_id
-    
-    if chat_id not in user_states:
-        await query.answer("Session expired. Please request a new signal.")
-        return
-    
-    news_data = user_states[chat_id].get("news_data")
-    if not news_data:
-        await query.answer("No news analysis available.")
-        return
-    
-    # Create keyboard with back button
-    keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        text=news_data["analysis"],
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    await query.answer()
-
-async def handle_technical_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle technical analysis button click"""
-    query = update.callback_query
-    
-    # Create keyboard with back button
-    keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(
-        text="📊 Technical Analysis feature coming soon!",
-        reply_markup=reply_markup
-    )
-    await query.answer()
-
-async def handle_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle back button click"""
-    query = update.callback_query
-    chat_id = query.message.chat_id
-    
-    if chat_id not in user_states:
-        await query.answer("Session expired. Please request a new signal.")
-        return
-    
-    # Restore original message with both options
-    keyboard = [
-        [
-            InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
-            InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    signal_text = user_states[chat_id].get("signal_text", "Signal not available")
-    await query.edit_message_text(
-        text=signal_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    await query.answer()
+@app.post("/callback/{callback_data}")
+async def handle_callback(callback_data: str, chat_id: int, message_id: int):
+    """Handle callback queries from Telegram"""
+    try:
+        if callback_data == "sentiment":
+            if chat_id not in user_states:
+                return {"status": "error", "message": "Session expired"}
+            
+            news_data = user_states[chat_id].get("news_data")
+            if not news_data:
+                return {"status": "error", "message": "No news analysis available"}
+            
+            # Create keyboard with back button
+            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=news_data["analysis"],
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            
+        elif callback_data == "technical":
+            # Create keyboard with back button
+            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text="📊 Technical Analysis feature coming soon!",
+                reply_markup=reply_markup
+            )
+            
+        elif callback_data == "back":
+            if chat_id not in user_states:
+                return {"status": "error", "message": "Session expired"}
+            
+            # Restore original message with both options
+            keyboard = [
+                [
+                    InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
+                    InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            signal_text = user_states[chat_id].get("signal_text", "Signal not available")
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=signal_text,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        
+        return {"status": "success"}
+            
+    except Exception as e:
+        logger.error(f"Error handling callback: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/send-signal")
 async def send_signal(message: SignalMessage):
@@ -178,20 +172,6 @@ async def send_signal(message: SignalMessage):
         logger.error(f"Error sending signal: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Register callback handlers
-bot.add_handler(CallbackQueryHandler(handle_sentiment_callback, pattern="^sentiment$"))
-bot.add_handler(CallbackQueryHandler(handle_technical_callback, pattern="^technical$"))
-bot.add_handler(CallbackQueryHandler(handle_back_callback, pattern="^back$"))
-
-# Start the bot in the background
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-
-def run_bot():
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    bot.run_polling()
-
-import threading
-thread = threading.Thread(target=run_bot)
-thread.daemon = True  # Set as daemon so it exits when main thread exits
-thread.start()
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)
