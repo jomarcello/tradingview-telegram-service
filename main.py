@@ -231,11 +231,11 @@ async def send_signal(message: SignalMessage):
         
         # Get news analysis if provided
         news_analysis = None
-        if message.news_data:
+        if message.signal_data.get("news"):  
             logger.info("Getting news analysis...")
             news_analysis = await get_news_analysis(
-                message.news_data["instrument"],
-                message.news_data["articles"]
+                message.signal_data["instrument"],  
+                message.signal_data["news"]  
             )
             logger.info("News analysis completed")
         
@@ -244,7 +244,7 @@ async def send_signal(message: SignalMessage):
             "signal_text": signal_text,
             "news_data": news_analysis
         }
-        logger.info("User state updated")
+        logger.info(f"User state updated: {user_states[message.chat_id]}")
         
         # Send initial message with options
         logger.info("Sending message to Telegram...")
@@ -252,11 +252,10 @@ async def send_signal(message: SignalMessage):
         logger.info("Message sent successfully")
         
         return {"status": "success", "message": "Signal sent successfully"}
-        
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
         logger.exception("Full traceback:")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to send signal: {str(e)}")
 
 @app.get("/")
 async def health_check():
