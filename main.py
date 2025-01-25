@@ -22,6 +22,7 @@ app = FastAPI()
 @app.get("/")
 async def health_check():
     """Health check endpoint"""
+    logger.info("Health check endpoint called")
     return {"status": "ok", "service": "tradingview-telegram-service"}
 
 # Initialize Telegram bot
@@ -151,30 +152,40 @@ async def handle_callback(callback_data: str, chat_id: int, message_id: int):
 async def send_signal(message: SignalMessage):
     """Send a signal message to a specific chat with interactive options"""
     try:
+        logger.info(f"Received signal request for chat_id: {message.chat_id}")
+        
         # Format signal
+        logger.info("Formatting signal...")
         signal_text = await format_signal(message.signal_data)
+        logger.info("Signal formatted successfully")
         
         # Get news analysis if provided
         news_analysis = None
         if message.news_data:
+            logger.info("Getting news analysis...")
             news_analysis = await get_news_analysis(
                 message.news_data["instrument"],
                 message.news_data["articles"]
             )
+            logger.info("News analysis completed")
         
         # Store in user state
         user_states[message.chat_id] = {
             "signal_text": signal_text,
             "news_data": news_analysis
         }
+        logger.info("User state updated")
         
         # Send initial message with options
+        logger.info("Sending message to Telegram...")
         await send_initial_message(message.chat_id, signal_text)
+        logger.info("Message sent successfully")
         
         return {"status": "success", "message": "Signal sent successfully"}
         
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
+        logger.exception("Full traceback:")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
