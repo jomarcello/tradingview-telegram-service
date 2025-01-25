@@ -47,25 +47,43 @@ class SignalMessage(BaseModel):
 
 async def format_signal(signal_data: Dict[str, Any]) -> str:
     """Format signal using the Signal AI Service"""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{SIGNAL_AI_SERVICE}/format-signal",
-            json=signal_data
-        )
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Error formatting signal")
-        return response.json()["formatted_message"]
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:  
+            logger.info(f"Sending request to Signal AI Service: {SIGNAL_AI_SERVICE}")
+            response = await client.post(
+                f"{SIGNAL_AI_SERVICE}/format-signal",
+                json=signal_data
+            )
+            if response.status_code != 200:
+                logger.error(f"Signal AI Service returned status code {response.status_code}: {response.text}")
+                raise HTTPException(status_code=response.status_code, detail=f"Error formatting signal: {response.text}")
+            return response.json()["formatted_message"]
+    except httpx.TimeoutException:
+        logger.error("Timeout while connecting to Signal AI Service")
+        raise HTTPException(status_code=504, detail="Signal AI Service timeout")
+    except httpx.RequestError as e:
+        logger.error(f"Error connecting to Signal AI Service: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Could not connect to Signal AI Service: {str(e)}")
 
 async def get_news_analysis(instrument: str, articles: list) -> Dict[str, Any]:
     """Get news analysis from News AI Service"""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{NEWS_AI_SERVICE}/analyze-news",
-            json={"instrument": instrument, "articles": articles}
-        )
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Error analyzing news")
-        return response.json()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:  
+            logger.info(f"Sending request to News AI Service: {NEWS_AI_SERVICE}")
+            response = await client.post(
+                f"{NEWS_AI_SERVICE}/analyze-news",
+                json={"instrument": instrument, "articles": articles}
+            )
+            if response.status_code != 200:
+                logger.error(f"News AI Service returned status code {response.status_code}: {response.text}")
+                raise HTTPException(status_code=response.status_code, detail=f"Error analyzing news: {response.text}")
+            return response.json()
+    except httpx.TimeoutException:
+        logger.error("Timeout while connecting to News AI Service")
+        raise HTTPException(status_code=504, detail="News AI Service timeout")
+    except httpx.RequestError as e:
+        logger.error(f"Error connecting to News AI Service: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Could not connect to News AI Service: {str(e)}")
 
 async def send_initial_message(chat_id: int, signal_text: str) -> None:
     """Send initial signal message with options"""
