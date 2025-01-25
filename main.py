@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI()
 
+@app.get("/")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "ok", "service": "tradingview-telegram-service"}
+
 # Initialize Telegram bot
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
