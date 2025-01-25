@@ -3,7 +3,7 @@ import json
 import logging
 import httpx
 from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext
@@ -18,12 +18,6 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI()
-
-@app.get("/")
-async def health_check():
-    """Health check endpoint"""
-    logger.info("Health check endpoint called")
-    return {"status": "ok", "service": "tradingview-telegram-service"}
 
 # Initialize Telegram bot
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -48,7 +42,7 @@ class SignalMessage(BaseModel):
 async def format_signal(signal_data: Dict[str, Any]) -> str:
     """Format signal using the Signal AI Service"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:  
+        async with httpx.AsyncClient(timeout=30.0) as client:
             logger.info(f"Sending request to Signal AI Service: {SIGNAL_AI_SERVICE}")
             response = await client.post(
                 f"{SIGNAL_AI_SERVICE}/format-signal",
@@ -68,7 +62,7 @@ async def format_signal(signal_data: Dict[str, Any]) -> str:
 async def get_news_analysis(instrument: str, articles: list) -> Dict[str, Any]:
     """Get news analysis from News AI Service"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:  
+        async with httpx.AsyncClient(timeout=30.0) as client:
             logger.info(f"Sending request to News AI Service: {NEWS_AI_SERVICE}")
             response = await client.post(
                 f"{NEWS_AI_SERVICE}/analyze-news",
@@ -102,16 +96,31 @@ async def send_initial_message(chat_id: int, signal_text: str) -> None:
         parse_mode='Markdown'
     )
 
-@app.post("/callback/{callback_data}")
-async def handle_callback(callback_data: str, chat_id: int, message_id: int):
-    """Handle callback queries from Telegram"""
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    """Handle Telegram webhook updates"""
     try:
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        if not update.callback_query:
+            return {"status": "success"}
+            
+        query = update.callback_query
+        chat_id = query.message.chat_id
+        message_id = query.message.message_id
+        callback_data = query.data
+        
+        logger.info(f"Received callback query: {callback_data} from chat_id: {chat_id}")
+        
         if callback_data == "sentiment":
             if chat_id not in user_states:
+                await query.answer("Session expired. Please request a new signal.")
                 return {"status": "error", "message": "Session expired"}
             
             news_data = user_states[chat_id].get("news_data")
             if not news_data:
+                await query.answer("No news analysis available.")
                 return {"status": "error", "message": "No news analysis available"}
             
             # Create keyboard with back button
@@ -125,6 +134,7 @@ async def handle_callback(callback_data: str, chat_id: int, message_id: int):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+            await query.answer()
             
         elif callback_data == "technical":
             # Create keyboard with back button
@@ -137,9 +147,11 @@ async def handle_callback(callback_data: str, chat_id: int, message_id: int):
                 text="📊 Technical Analysis feature coming soon!",
                 reply_markup=reply_markup
             )
+            await query.answer()
             
         elif callback_data == "back":
             if chat_id not in user_states:
+                await query.answer("Session expired. Please request a new signal.")
                 return {"status": "error", "message": "Session expired"}
             
             # Restore original message with both options
@@ -159,12 +171,14 @@ async def handle_callback(callback_data: str, chat_id: int, message_id: int):
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
+            await query.answer()
         
         return {"status": "success"}
             
     except Exception as e:
-        logger.error(f"Error handling callback: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error handling webhook: {str(e)}")
+        logger.exception("Full traceback:")
+        return {"status": "error", "detail": str(e)}
 
 @app.post("/send-signal")
 async def send_signal(message: SignalMessage):
@@ -205,6 +219,12 @@ async def send_signal(message: SignalMessage):
         logger.error(f"Error sending signal: {str(e)}")
         logger.exception("Full traceback:")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/")
+async def health_check():
+    """Health check endpoint"""
+    logger.info("Health check endpoint called")
+    return {"status": "ok", "service": "tradingview-telegram-service"}
 
 if __name__ == "__main__":
     import uvicorn
