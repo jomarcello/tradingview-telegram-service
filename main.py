@@ -54,16 +54,31 @@ user_states: Dict[int, Dict[str, Any]] = {}
 async def startup_event():
     """Set webhook on startup"""
     try:
-        logger.info(f"Setting webhook to: {WEBHOOK_URL}")
+        webhook_url = "https://tradingview-telegram-service-production.up.railway.app/webhook"
+        logger.info(f"Setting webhook to: {webhook_url}")
         webhook_info = await bot.get_webhook_info()
-        if webhook_info.url != WEBHOOK_URL:
+        current_url = webhook_info.url if webhook_info else None
+        logger.info(f"Current webhook URL: {current_url}")
+        
+        if current_url != webhook_url:
+            logger.info("Deleting old webhook...")
             await bot.delete_webhook()
-            await bot.set_webhook(url=WEBHOOK_URL)
-            logger.info("Webhook set successfully")
+            logger.info("Setting new webhook...")
+            success = await bot.set_webhook(url=webhook_url)
+            if success:
+                logger.info("Webhook set successfully")
+            else:
+                logger.error("Failed to set webhook")
         else:
             logger.info("Webhook already set correctly")
+            
+        # Verify webhook is set
+        webhook_info = await bot.get_webhook_info()
+        logger.info(f"Final webhook URL: {webhook_info.url}")
+        logger.info(f"Webhook info: {webhook_info.to_dict()}")
     except Exception as e:
-        logger.error(f"Error setting webhook: {e}")
+        logger.error(f"Error setting webhook: {str(e)}")
+        logger.exception("Full traceback:")
         raise
 
 @app.on_event("shutdown")
