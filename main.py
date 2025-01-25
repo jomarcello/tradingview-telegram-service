@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
