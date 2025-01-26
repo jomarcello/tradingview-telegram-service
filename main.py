@@ -420,14 +420,16 @@ Risk Management:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     f"{SIGNAL_AI_SERVICE}/format-signal",
-                    json=signal_data
+                    json=signal_data,
+                    headers={"Content-Type": "application/json"}
                 )
-                if response.status_code == 200:
-                    formatted_signal = response.json()["formatted_signal"]
+                response_data = response.json()
+                if response.status_code == 200 and "formatted_signal" in response_data:
+                    formatted_signal = response_data["formatted_signal"]
                     formatted_signal += f"\n\n📊 View Chart:\n{chart_url}"
                     return formatted_signal
                 else:
-                    logger.warning(f"Signal AI Service failed, using basic format. Error: {response.text}")
+                    logger.warning(f"Signal AI Service failed or invalid response, using basic format. Response: {response.text}")
                     return basic_signal
         except Exception as e:
             logger.warning(f"Signal AI Service failed, using basic format. Error: {str(e)}")
@@ -472,39 +474,38 @@ async def send_signal(message: SignalMessage):
         signal_text = await format_signal(message.signal_data.dict())
         logger.info(f"Signal formatted successfully: {signal_text}")
         
-        # Get news analysis
+        # Get news analysis if available
         news_analysis = None
-        if message.news_data and message.news_data.get("articles"):
-            logger.info("Getting news analysis...")
-            news_analysis = await get_news_analysis(
-                message.signal_data["instrument"],
-                message.news_data["articles"]
-            )
-            logger.info(f"News analysis completed: {news_analysis}")
-        else:
-            logger.warning("No news data or articles provided")
+        if message.news_data and message.news_data.articles:
+            try:
+                articles = [{"title": article.title, "content": article.content} 
+                          for article in message.news_data.articles]
+                news_analysis = await get_news_analysis(message.signal_data.instrument, articles)
+            except Exception as e:
+                logger.error(f"Error getting news analysis: {str(e)}")
         
-        # Store in user state
-        user_states[message.chat_id] = {
-            "signal_text": signal_text,
-            "news_data": {
-                "analysis": f"📊 *Market Sentiment Analysis*\n\n"
-                           f"Based on recent news and market data for {message.signal_data['instrument']}:\n\n"
-                           f"{news_analysis['analysis'] if news_analysis else 'No market sentiment analysis available at this time.'}"
-            } if news_analysis else None
-        }
-        logger.info(f"User state updated for chat_id {message.chat_id}: {user_states[message.chat_id]}")
+        # Send initial message with buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
+                InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send initial message with options
-        logger.info("Sending message to Telegram...")
-        await send_initial_message(message.chat_id, signal_text)
+        await bot.send_message(
+            chat_id=message.chat_id,
+            text=signal_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
         logger.info("Message sent successfully")
         
         return {"status": "success", "message": "Signal sent successfully"}
+        
     except Exception as e:
-        logger.error(f"Error sending signal: {str(e)}")
-        logger.exception("Full traceback:")
-        raise HTTPException(status_code=500, detail=f"Failed to send signal: {str(e)}")
+        logger.error(f"Failed to send signal: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Failed to send signal: {str(e)}")
 
 @app.get("/")
 async def health_check():
