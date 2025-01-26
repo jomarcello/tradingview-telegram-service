@@ -50,6 +50,116 @@ bot = Bot(token=BOT_TOKEN)
 # Store user states (for back button functionality)
 user_states: Dict[int, Dict[str, Any]] = {}
 
+# Market specific settings
+MARKET_SETTINGS = {
+    # Forex pairs (1 pip = 0.0001)
+    "EURUSD": {"pip_value": 0.0001, "decimals": 4},
+    "GBPUSD": {"pip_value": 0.0001, "decimals": 4},
+    "USDJPY": {"pip_value": 0.01, "decimals": 3},    # JPY pairs use 2 decimals
+    "AUDUSD": {"pip_value": 0.0001, "decimals": 4},
+    "USDCAD": {"pip_value": 0.0001, "decimals": 4},
+    
+    # Crypto (different point values)
+    "BTCUSD": {"pip_value": 1, "decimals": 1},      # 1 point = $1
+    "ETHUSD": {"pip_value": 0.1, "decimals": 2},    # 0.1 point = $0.1
+    "XRPUSD": {"pip_value": 0.0001, "decimals": 4}, # More precise for lower value coins
+    
+    # Indices
+    "US30": {"pip_value": 1, "decimals": 0},        # 1 point = $1
+    "SPX500": {"pip_value": 0.25, "decimals": 2},   # 0.25 points
+    "NAS100": {"pip_value": 0.25, "decimals": 2},   # 0.25 points
+    
+    # Commodities
+    "XAUUSD": {"pip_value": 0.1, "decimals": 2},    # Gold (0.1 point = $0.1)
+    "XAGUSD": {"pip_value": 0.01, "decimals": 3},   # Silver (0.01 point)
+    "WTIUSD": {"pip_value": 0.01, "decimals": 2},   # Oil (0.01 point)
+}
+
+def calculate_rr_levels(instrument: str, entry_price: float, direction: str, risk_pips: float = None, risk_points: float = None) -> dict:
+    """
+    Calculate take profit level based on 1:1 risk-reward ratio.
+    
+    Args:
+        instrument: Trading instrument (e.g., 'EURUSD', 'BTCUSD')
+        entry_price: Entry price for the trade
+        direction: Trade direction ('buy' or 'sell')
+        risk_pips: Risk in pips (for forex)
+        risk_points: Risk in points (for other markets)
+    
+    Returns:
+        dict: Contains calculated stop loss and take profit levels
+    """
+    try:
+        # Get market settings
+        settings = MARKET_SETTINGS.get(instrument.upper())
+        if not settings:
+            logger.warning(f"No settings found for {instrument}, using default forex settings")
+            settings = {"pip_value": 0.0001, "decimals": 4}
+        
+        pip_value = settings["pip_value"]
+        decimals = settings["decimals"]
+        
+        # Calculate risk in points if given in pips
+        if risk_pips is not None:
+            risk_points = risk_pips * pip_value
+        
+        # Calculate stop loss and take profit
+        if direction.lower() == "buy":
+            stop_loss = round(entry_price - risk_points, decimals)
+            take_profit = round(entry_price + risk_points, decimals)
+        else:  # sell
+            stop_loss = round(entry_price + risk_points, decimals)
+            take_profit = round(entry_price - risk_points, decimals)
+        
+        return {
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk_points": risk_points,
+            "risk_pips": risk_points / pip_value if pip_value else None,
+            "pip_value": pip_value
+        }
+    except Exception as e:
+        logger.error(f"Error calculating RR levels: {str(e)}")
+        return None
+
+@app.post("/calculate-rr")
+async def calculate_risk_reward(
+    instrument: str,
+    entry_price: float,
+    direction: str,
+    risk_pips: float = None,
+    risk_points: float = None
+):
+    """Calculate 1:1 risk-reward levels for a given trade setup"""
+    try:
+        if not risk_pips and not risk_points:
+            raise HTTPException(status_code=400, detail="Either risk_pips or risk_points must be provided")
+            
+        result = calculate_rr_levels(
+            instrument=instrument,
+            entry_price=entry_price,
+            direction=direction,
+            risk_pips=risk_pips,
+            risk_points=risk_points
+        )
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Error calculating RR levels")
+            
+        return {
+            "status": "success",
+            "data": {
+                "instrument": instrument,
+                "direction": direction,
+                "levels": result,
+                "message": f"Calculated 1:1 RR levels for {instrument} {direction} trade"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in calculate_risk_reward endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.on_event("startup")
 async def startup_event():
     """Set webhook on startup"""
@@ -311,6 +421,30 @@ async def send_signal(message: SignalMessage):
         logger.info(f"Received signal request for chat_id: {message.chat_id}")
         logger.info(f"Signal data: {message.signal_data}")
         logger.info(f"News data: {message.news_data}")
+        
+        # Calculate proper RR levels
+        entry_price = message.signal_data.get("entry_price")
+        stop_loss = message.signal_data.get("stop_loss")
+        instrument = message.signal_data.get("instrument")
+        direction = message.signal_data.get("direction")
+        
+        if all([entry_price, stop_loss, instrument, direction]):
+            # Calculate risk in points
+            settings = MARKET_SETTINGS.get(instrument.upper(), {"pip_value": 0.0001, "decimals": 4})
+            risk_points = abs(entry_price - stop_loss)
+            
+            # Recalculate levels to ensure 1:1 RR
+            levels = calculate_rr_levels(
+                instrument=instrument,
+                entry_price=entry_price,
+                direction=direction,
+                risk_points=risk_points
+            )
+            
+            if levels:
+                message.signal_data["stop_loss"] = levels["stop_loss"]
+                message.signal_data["take_profit"] = levels["take_profit"]
+                logger.info(f"Adjusted levels for 1:1 RR: {levels}")
         
         # Format signal
         logger.info("Formatting signal...")
