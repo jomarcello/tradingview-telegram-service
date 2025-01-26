@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import httpx
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -334,11 +334,26 @@ async def telegram_webhook(request: Request):
         logger.exception("Full traceback:")
         return {"status": "error", "detail": str(e)}
 
+class SignalData(BaseModel):
+    instrument: str
+    direction: str
+    entry_price: float
+    timeframe: str
+    stop_loss: float
+    take_profit: Optional[float] = None
+    strategy: str
+
+class NewsArticle(BaseModel):
+    title: str
+    content: str
+
+class NewsData(BaseModel):
+    articles: List[NewsArticle]
+
 class SignalMessage(BaseModel):
-    """Signal message model"""
     chat_id: int
-    signal_data: Dict[str, Any]
-    news_data: Optional[Dict[str, Any]] = None
+    signal_data: SignalData
+    news_data: Optional[NewsData] = None
 
 async def format_signal(signal_data: Dict[str, Any]) -> str:
     """Format signal using the Signal AI Service"""
@@ -448,7 +463,7 @@ async def send_signal(message: SignalMessage):
         
         # Format signal
         logger.info("Formatting signal...")
-        signal_text = await format_signal(message.signal_data)
+        signal_text = await format_signal(message.signal_data.dict())
         logger.info(f"Signal formatted successfully: {signal_text}")
         
         # Get news analysis
