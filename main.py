@@ -389,21 +389,49 @@ async def format_signal(signal_data: Dict[str, Any]) -> str:
         
         chart_url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={tv_timeframe}"
         
-        # Format the signal with Signal AI Service
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{SIGNAL_AI_SERVICE}/format-signal",
-                json=signal_data
-            )
-            if response.status_code != 200:
-                raise Exception(f"Error from Signal AI Service: {response.text}")
-            
-            formatted_signal = response.json()["formatted_signal"]
-            
-            # Add chart link at the bottom
-            formatted_signal += f"\n\n📊 View Chart:\n{chart_url}"
-            
-            return formatted_signal
+        # Create basic signal format if Signal AI Service fails
+        direction_emoji = "📈" if signal_data.get("direction", "").lower() == "buy" else "📉"
+        basic_signal = f"""🚨 New Trading Signal 🚨
+
+Instrument: {signal_data.get("instrument", "")}
+Action: {signal_data.get("direction", "").upper()} {direction_emoji}
+
+Entry Price: {signal_data.get("entry_price", "")}
+Stop Loss: {signal_data.get("stop_loss", "")} 🛑
+Take Profit: {signal_data.get("take_profit", "")} 🎯
+
+Timeframe: {signal_data.get("timeframe", "")}
+Strategy: {signal_data.get("strategy", "")}
+
+-------------------
+
+Risk Management:
+• Position size: 1-2% max
+• Use proper stop loss
+• Follow your trading plan
+
+-------------------
+
+📊 View Chart:
+{chart_url}"""
+        
+        # Try to get AI formatted signal, fallback to basic if fails
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{SIGNAL_AI_SERVICE}/format-signal",
+                    json=signal_data
+                )
+                if response.status_code == 200:
+                    formatted_signal = response.json()["formatted_signal"]
+                    formatted_signal += f"\n\n📊 View Chart:\n{chart_url}"
+                    return formatted_signal
+                else:
+                    logger.warning(f"Signal AI Service failed, using basic format. Error: {response.text}")
+                    return basic_signal
+        except Exception as e:
+            logger.warning(f"Signal AI Service failed, using basic format. Error: {str(e)}")
+            return basic_signal
             
     except Exception as e:
         logger.error(f"Error formatting signal: {str(e)}")
