@@ -358,90 +358,68 @@ class SignalMessage(BaseModel):
 async def format_signal(signal_data: Dict[str, Any]) -> str:
     """Format signal using the Signal AI Service"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            logger.info(f"Sending request to Signal AI Service: {SIGNAL_AI_SERVICE}")
+        # Generate TradingView chart URL
+        instrument = signal_data.get("instrument", "").upper()
+        # Map common symbols to TradingView format
+        tv_symbol_map = {
+            "EURUSD": "FX:EURUSD",
+            "GBPUSD": "FX:GBPUSD",
+            "USDJPY": "FX:USDJPY",
+            "BTCUSD": "BINANCE:BTCUSDT",  # Using Binance as source
+            "ETHUSD": "BINANCE:ETHUSDT",
+            "US30": "DJ:DJI",
+            "SPX500": "SP:SPX",
+            "NAS100": "NASDAQ:NDX",
+            "XAUUSD": "OANDA:XAUUSD"
+        }
+        tv_symbol = tv_symbol_map.get(instrument, instrument)
+        timeframe = signal_data.get("timeframe", "1h")
+        # Map timeframes to TradingView format
+        tv_timeframe_map = {
+            "1m": "1",
+            "5m": "5",
+            "15m": "15",
+            "30m": "30",
+            "1h": "60",
+            "4h": "240",
+            "1d": "D",
+            "1w": "W"
+        }
+        tv_timeframe = tv_timeframe_map.get(timeframe, "60")
+        
+        chart_url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={tv_timeframe}"
+        
+        # Format the signal with Signal AI Service
+        async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{SIGNAL_AI_SERVICE}/format-signal",
                 json=signal_data
             )
             if response.status_code != 200:
-                logger.error(f"Signal AI Service returned status code {response.status_code}: {response.text}")
-                raise HTTPException(status_code=response.status_code, detail=f"Error formatting signal: {response.text}")
+                raise Exception(f"Error from Signal AI Service: {response.text}")
             
-            result = response.json()
-            # Remove the 'Remember:' section and everything after it
-            formatted_message = result["formatted_message"]
-            if "Remember:" in formatted_message:
-                formatted_message = formatted_message.split("Remember:")[0].strip()
-            return formatted_message
-    except httpx.TimeoutException:
-        logger.error("Timeout while connecting to Signal AI Service")
-        raise HTTPException(status_code=504, detail="Signal AI Service timeout")
-    except httpx.RequestError as e:
-        logger.error(f"Error connecting to Signal AI Service: {str(e)}")
-        raise HTTPException(status_code=502, detail=f"Could not connect to Signal AI Service: {str(e)}")
-
-async def get_news_analysis(instrument: str, articles: list) -> Dict[str, Any]:
-    """Get news analysis from News AI Service"""
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            logger.info(f"Sending request to News AI Service: {NEWS_AI_SERVICE}")
-            logger.info(f"Request data: instrument={instrument}, articles={articles}")
+            formatted_signal = response.json()["formatted_signal"]
             
-            response = await client.post(
-                f"{NEWS_AI_SERVICE}/analyze-news",
-                json={"instrument": instrument, "articles": articles}
-            )
+            # Add chart link at the bottom
+            formatted_signal += f"\n\n📊 View Chart:\n{chart_url}"
             
-            if response.status_code != 200:
-                logger.error(f"News AI Service returned status code {response.status_code}: {response.text}")
-                raise HTTPException(status_code=response.status_code, detail=f"Error analyzing news: {response.text}")
+            return formatted_signal
             
-            result = response.json()
-            logger.info(f"News analysis result: {result}")
-            return result
-    except httpx.TimeoutException:
-        logger.error("Timeout while connecting to News AI Service")
-        raise HTTPException(status_code=504, detail="News AI Service timeout")
-    except httpx.RequestError as e:
-        logger.error(f"Error connecting to News AI Service: {str(e)}")
-        raise HTTPException(status_code=502, detail=f"Could not connect to News AI Service: {str(e)}")
-
-async def send_initial_message(chat_id: int, signal_text: str) -> None:
-    """Send initial signal message with options"""
-    keyboard = [
-        [
-            InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
-            InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=signal_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        logger.info(f"Initial message sent to chat_id: {chat_id}")
     except Exception as e:
-        logger.error(f"Error sending initial message: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
+        logger.error(f"Error formatting signal: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Error formatting signal: {str(e)}")
 
 @app.post("/send-signal")
 async def send_signal(message: SignalMessage):
     """Send a signal message to a specific chat with interactive options"""
     try:
         logger.info(f"Received signal request for chat_id: {message.chat_id}")
-        logger.info(f"Signal data: {message.signal_data}")
-        logger.info(f"News data: {message.news_data}")
         
         # Calculate proper RR levels
-        entry_price = message.signal_data.get("entry_price")
-        stop_loss = message.signal_data.get("stop_loss")
-        instrument = message.signal_data.get("instrument")
-        direction = message.signal_data.get("direction")
+        entry_price = message.signal_data.entry_price
+        stop_loss = message.signal_data.stop_loss
+        instrument = message.signal_data.instrument
+        direction = message.signal_data.direction
         
         if all([entry_price, stop_loss, instrument, direction]):
             # Calculate risk in points
@@ -457,8 +435,8 @@ async def send_signal(message: SignalMessage):
             )
             
             if levels:
-                message.signal_data["stop_loss"] = levels["stop_loss"]
-                message.signal_data["take_profit"] = levels["take_profit"]
+                message.signal_data.stop_loss = levels["stop_loss"]
+                message.signal_data.take_profit = levels["take_profit"]
                 logger.info(f"Adjusted levels for 1:1 RR: {levels}")
         
         # Format signal
