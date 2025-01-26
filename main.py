@@ -355,6 +355,23 @@ class SignalMessage(BaseModel):
     signal_data: SignalData
     news_data: Optional[NewsData] = None
 
+async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Get news analysis from News AI Service"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{NEWS_AI_SERVICE}/analyze-news",
+                json={"instrument": instrument, "articles": articles}
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.warning(f"News AI Service failed: {response.text}")
+                return None
+    except Exception as e:
+        logger.warning(f"Error getting news analysis: {str(e)}")
+        return None
+
 async def format_signal(signal_data: Dict[str, Any]) -> str:
     """Format signal using the Signal AI Service"""
     try:
@@ -415,25 +432,7 @@ Risk Management:
 📊 View Chart:
 {chart_url}"""
         
-        # Try to get AI formatted signal, fallback to basic if fails
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    f"{SIGNAL_AI_SERVICE}/format-signal",
-                    json=signal_data,
-                    headers={"Content-Type": "application/json"}
-                )
-                response_data = response.json()
-                if response.status_code == 200 and "formatted_signal" in response_data:
-                    formatted_signal = response_data["formatted_signal"]
-                    formatted_signal += f"\n\n📊 View Chart:\n{chart_url}"
-                    return formatted_signal
-                else:
-                    logger.warning(f"Signal AI Service failed or invalid response, using basic format. Response: {response.text}")
-                    return basic_signal
-        except Exception as e:
-            logger.warning(f"Signal AI Service failed, using basic format. Error: {str(e)}")
-            return basic_signal
+        return basic_signal
             
     except Exception as e:
         logger.error(f"Error formatting signal: {str(e)}")
@@ -483,6 +482,16 @@ async def send_signal(message: SignalMessage):
                 news_analysis = await get_news_analysis(message.signal_data.instrument, articles)
             except Exception as e:
                 logger.error(f"Error getting news analysis: {str(e)}")
+        
+        # Store in user state
+        user_states[message.chat_id] = {
+            "signal_text": signal_text,
+            "news_data": {
+                "analysis": f"📊 *Market Sentiment Analysis*\n\n"
+                           f"Based on recent news and market data for {message.signal_data.instrument}:\n\n"
+                           f"{news_analysis['analysis'] if news_analysis else 'No market sentiment analysis available at this time.'}"
+            } if news_analysis else None
+        }
         
         # Send initial message with buttons
         keyboard = [
