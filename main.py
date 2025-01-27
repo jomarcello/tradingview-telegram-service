@@ -124,12 +124,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 
                 # Get chart from chart service
-                chart_service_url = "https://tradingview-chart-service-production.up.railway.app/get-chart"
+                chart_service_url = "https://tradingview-chart-service-production.up.railway.app/screenshot"
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
                         response = await client.get(
                             chart_service_url,
-                            params={"symbol": message_data["symbol"]}
+                            params={
+                                "symbol": message_data["symbol"],
+                                "interval": "15m"
+                            }
                         )
                         
                         if response.status_code != 200:
@@ -142,7 +145,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             return
                         
                         chart_data = response.json()
-                        if not chart_data.get("image_url"):
+                        if not chart_data.get("image"):
                             keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                             await query.edit_message_text(
                                 text="❌ No chart available",
@@ -154,10 +157,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
+                        # Create image data from base64
+                        image_data = base64.b64decode(chart_data["image"])
+                        
                         # Send the chart image
                         await context.bot.send_photo(
                             chat_id=query.message.chat_id,
-                            photo=chart_data["image_url"],
+                            photo=image_data,
                             caption=f"📊 Technical Analysis for {message_data['symbol']}",
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
