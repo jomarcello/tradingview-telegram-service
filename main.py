@@ -92,7 +92,7 @@ MARKET_SETTINGS = {
 class MessageRegistry:
     def __init__(self):
         self.last_signal_time = {}  # chat_id -> last signal time
-        self.cooldown = 300  # 5 minutes in seconds
+        self.cooldown = 0  # Temporarily disabled cooldown for testing
         
     def can_send_signal(self, chat_id: str) -> bool:
         now = time.time()
@@ -418,60 +418,53 @@ async def send_signal(signal_request: SignalRequest) -> dict:
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses"""
-    query = update.callback_query
-    await query.answer()
-    
     try:
-        # Get user state
-        chat_id = str(query.message.chat_id)
-        user_state = user_states.get(chat_id, {})
-        
+        query = update.callback_query
+        chat_id = query.message.chat.id
+
         if query.data == "technical_analysis":
-            if not all(k in user_state for k in ["instrument", "timeframe"]):
-                await query.edit_message_text(
-                    text="Sorry, I couldn't find the trading pair information. Please try again with a new signal.",
-                    reply_markup=None
-                )
+            # Get the symbol from the original message
+            symbol = get_symbol_from_message(query.message.text)
+            if not symbol:
+                await query.answer("Could not find symbol in message")
                 return
-                
-            try:
-                # Show loading state
-                await query.edit_message_text(
-                    text="📊 Generating technical analysis chart...",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-                
-                # Get chart image from TradingView service
-                chart_image = await get_chart_image(user_state["instrument"], user_state["timeframe"])
-                if not chart_image:
-                    raise Exception("Failed to get chart image")
+
+            # Call TradingView chart service
+            chart_url = f"https://tradingview-chart-service-production.up.railway.app/screenshot?symbol={symbol}&interval=15m"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(chart_url)
+                if response.status_code != 200:
+                    logger.error(f"Failed to get chart: {response.status_code}")
+                    await query.answer("Failed to get chart")
+                    return
                     
-                # Create back button
+                data = response.json()
+                if data.get("status") != "success":
+                    logger.error(f"Chart service error: {data}")
+                    await query.answer("Chart service error")
+                    return
+                    
+                # Convert base64 image
+                image_data = base64.b64decode(data["image"])
+                
+                # Create keyboard with Back button
                 keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                 
-                # Send chart as new message
+                # Send photo with Back button
                 await bot.send_photo(
                     chat_id=chat_id,
-                    photo=chart_image,
-                    caption=f"📊 Technical Analysis for {user_state['instrument']} ({user_state['timeframe']})\n\nShowing RSI, MACD and Bollinger Bands",
+                    photo=image_data,
+                    caption=f"Technical Analysis for {symbol} (15m)",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 
-            except Exception as e:
-                logger.error(f"Error getting technical analysis: {str(e)}")
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="Sorry, I couldn't generate the technical analysis chart. Please try again later."
-                )
-                
+                await query.answer()
+
         elif query.data == "market_sentiment":
-            if not all(k in user_state for k in ["instrument", "timeframe"]):
-                await query.edit_message_text(
-                    text="Sorry, I couldn't find the trading pair information. Please try again with a new signal.",
-                    reply_markup=None
-                )
+            if not all(k in user_states.get(chat_id, {}) for k in ["instrument", "timeframe"]):
+                await query.answer("Could not find symbol in message")
                 return
-                
+
             try:
                 # Show loading state
                 loading_text = f"📰 Analyzing market sentiment..."
@@ -481,7 +474,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 
                 # Get sentiment data
-                sentiment_data = await get_news_analysis(user_state["instrument"], [])
+                sentiment_data = await get_news_analysis(user_states[chat_id]["instrument"], [])
                 if not sentiment_data:
                     raise Exception("Failed to get market sentiment")
                     
@@ -491,13 +484,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # Send sentiment as new message
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=f"📰 Market Sentiment Analysis for {user_state['instrument']}\n\n{sentiment_data}\n\n_Based on recent market news and events._",
+                    text=f"📰 Market Sentiment Analysis for {user_states[chat_id]['instrument']}\n\n{sentiment_data}\n\n_Based on recent market news and events._",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN
                 )
                 
                 # Restore original message
-                original_message = user_state.get("original_message", "")
+                original_message = user_states.get(chat_id, {}).get("original_message", "")
                 if original_message:
                     keyboard = [
                         [
