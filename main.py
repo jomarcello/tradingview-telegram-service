@@ -433,6 +433,11 @@ async def telegram_webhook(request: Request):
                     _, instrument, timeframe = callback_data.split("_")
                     logger.info(f"Processing chart request for {instrument} {timeframe}")
                     
+                    # Store original message for back button
+                    if chat_id not in user_states:
+                        user_states[chat_id] = {}
+                    user_states[chat_id]["original_message"] = await bot.get_message(chat_id, message_id)
+                    
                     # Create back button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -474,30 +479,19 @@ async def telegram_webhook(request: Request):
                             else:
                                 image_bytes = image_data
                             
-                            # Get technical analysis from chart data
-                            analysis_text = chart_data.get("analysis", "")
-                            if not analysis_text:
-                                # Use signal data if no analysis is provided
-                                analysis_text = f"Technical analysis for {instrument} {timeframe}:\n\n"
-                                analysis_text += f"• Direction: {user_states[chat_id]['signal_data']['direction'].upper()}\n"
-                                analysis_text += f"• Entry Price: {user_states[chat_id]['signal_data']['entry_price']}\n"
-                                analysis_text += f"• Stop Loss: {user_states[chat_id]['signal_data']['stop_loss']}\n"
-                                analysis_text += f"• Take Profit: {user_states[chat_id]['signal_data']['take_profit']}\n"
-                                analysis_text += f"• Strategy: {user_states[chat_id]['signal_data']['strategy']}"
-                            
-                            # Create message with chart and analysis
+                            # Create message with chart
                             await bot.edit_message_media(
                                 chat_id=chat_id,
                                 message_id=message_id,
                                 media=InputMediaPhoto(
                                     media=image_bytes,
-                                    caption=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{analysis_text}",
+                                    caption=f"📊 Technical Analysis for {instrument} ({timeframe})",
                                     parse_mode='Markdown'
                                 ),
                                 reply_markup=reply_markup
                             )
                             
-                            logger.info("Successfully sent chart image with analysis")
+                            logger.info("Successfully sent chart image")
                         else:
                             error_msg = chart_data.get("error", "Unknown error occurred")
                             logger.error(f"Chart service error: {error_msg}")
@@ -511,35 +505,30 @@ async def telegram_webhook(request: Request):
                         text=f"❌ Error generating chart: {str(e)}",
                         reply_markup=reply_markup
                     )
-            
+                    
             # Handle back button
             elif callback_data == "back_to_signal":
-                logger.info("Processing back to signal request")
                 try:
-                    # Get original message from state
-                    state = user_states.get(chat_id, {})
-                    original_message = state.get("original_message")
-                    original_markup = state.get("original_markup")
-                    
-                    if original_message and original_markup:
+                    if chat_id in user_states and "original_message" in user_states[chat_id]:
+                        original_message = user_states[chat_id]["original_message"]
+                        # Restore original message with its markup
                         await bot.edit_message_text(
                             chat_id=chat_id,
                             message_id=message_id,
-                            text=original_message,
-                            reply_markup=original_markup,
+                            text=original_message.text,
+                            reply_markup=original_message.reply_markup,
                             parse_mode='Markdown'
                         )
+                        logger.info("Successfully restored original message")
                     else:
-                        logger.error("Original message not found in state")
-                        await bot.answer_callback_query(
-                            callback_query_id=query.id,
-                            text="⚠️ Could not retrieve original message"
-                        )
+                        raise Exception("Original message not found in user states")
                 except Exception as e:
                     logger.error(f"Error handling back button: {str(e)}")
-                    await bot.answer_callback_query(
-                        callback_query_id=query.id,
-                        text="⚠️ Error returning to original message"
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text="❌ Error: Could not restore original message",
+                        reply_markup=None
                     )
             
             await query.answer()
