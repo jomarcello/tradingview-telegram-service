@@ -50,6 +50,8 @@ SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-a
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
 CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service-production.up.railway.app")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://tradingview-telegram-service-production.up.railway.app/webhook")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://your-supabase-url.supabase.co/rest/v1/subscribers")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "your-supabase-key")
 
 logger.info(f"Initialized with services: SIGNAL={SIGNAL_AI_SERVICE}, NEWS={NEWS_AI_SERVICE}, CHART={CHART_SERVICE}")
 
@@ -310,20 +312,6 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         # Get signal data
         signal_data = signal_request.signal_data
         
-        # Send signal to Signal AI Service for formatting if not already formatted
-        if "formatted_message" not in signal_data:
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        f"{SIGNAL_AI_SERVICE}/format-signal",
-                        json=signal_data
-                    )
-                    response.raise_for_status()
-                    signal_data.update(response.json())
-            except Exception as e:
-                logger.error(f"Error formatting signal: {str(e)}")
-                return {"status": "error", "message": f"Error formatting signal: {str(e)}"}
-        
         # Create keyboard markup with sentiment and chart buttons
         keyboard = [
             [
@@ -333,36 +321,57 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        # Format message
+        message = (
+            f"🚨 *{signal_data['instrument']} {signal_data['direction'].upper()}*\n\n"
+            f"💰 Entry Price: {signal_data['entry_price']}\n"
+            f"🛑 Stop Loss: {signal_data['stop_loss']}\n"
+            f"🎯 Take Profit: {signal_data['take_profit']}\n\n"
+            f"📈 Strategy: {signal_data['strategy']}\n"
+            f"⏰ Timeframe: {signal_data['timeframe']}"
+        )
+        
+        # Get chat IDs from Supabase if chat_id is "all"
+        chat_ids = []
+        if signal_request.chat_id == "all":
+            subscribers = await get_subscribers()
+            chat_ids = [sub["chat_id"] for sub in subscribers]
+        else:
+            chat_ids = [signal_request.chat_id]
+        
         # Store signal data in user state
-        chat_id = signal_request.chat_id if signal_request.chat_id else await get_subscriber_chat_ids()
-        if chat_id not in user_states:
-            user_states[chat_id] = {}
-        user_states[chat_id]["signal_data"] = {
-            "direction": signal_data["action"],
-            "entry_price": signal_data["price"],
-            "stop_loss": signal_data["stoploss"],
-            "take_profit": signal_data["takeprofit"],
-            "strategy": signal_data["strategy"],
-            "message": signal_data["formatted_message"],
-            "markup": reply_markup
-        }
+        for chat_id in chat_ids:
+            if chat_id not in user_states:
+                user_states[chat_id] = {}
+            user_states[chat_id]["signal_data"] = {
+                "instrument": signal_data["instrument"],
+                "direction": signal_data["direction"],
+                "entry_price": signal_data["entry_price"],
+                "stop_loss": signal_data["stop_loss"],
+                "take_profit": signal_data["take_profit"],
+                "strategy": signal_data["strategy"],
+                "timeframe": signal_data["timeframe"],
+                "message": message,
+                "markup": reply_markup
+            }
         
         # Send message to all subscribers
-        try:
-            sent_message = await bot.send_message(
-                chat_id=chat_id,
-                text=signal_data["formatted_message"],
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-            logger.info(f"Sent signal to chat_id {chat_id}")
-            
-            # Store sent message in user state
-            user_states[chat_id]["original_message"] = sent_message
-            
-        except Exception as e:
-            logger.error(f"Failed to send signal to chat_id {chat_id}: {str(e)}")
-            return {"status": "error", "message": f"Failed to send signal to chat_id {chat_id}: {str(e)}"}
+        for chat_id in chat_ids:
+            try:
+                sent_message = await bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Sent signal to chat_id {chat_id}")
+                
+                # Store sent message in user state
+                user_states[chat_id]["original_message"] = sent_message
+                
+            except Exception as e:
+                logger.error(f"Failed to send signal to chat_id {chat_id}: {str(e)}")
+                continue
 
         return {"status": "success", "message": "Signal sent successfully"}
         
