@@ -244,21 +244,26 @@ async def get_tradingview_widget_html(symbol: str, timeframe: str) -> str:
     '''
     return widget_html
 
-async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
-    """Get chart screenshot from Chart Service"""
+async def get_chart_image(instrument: str, timeframe: str) -> str:
+    """Get chart image from TradingView chart service"""
     try:
-        logger.info(f"Requesting chart for {instrument} {timeframe}")
+        url = f"{os.getenv('CHART_SERVICE')}/screenshot"
+        params = {
+            "symbol": instrument,
+            "interval": timeframe,
+            "studies": ["RSI", "MACD", "BB"],  # Add default technical indicators
+            "theme": "dark"
+        }
+        
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{CHART_SERVICE}/capture-chart",
-                json={"symbol": instrument, "timeframe": timeframe},
-                timeout=30.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get("image")
+            response = await client.get(url, params=params)
+            if response.status_code != 200:
+                raise Exception(f"Chart service returned status code {response.status_code}")
+                
+            return response.content
+            
     except Exception as e:
-        logger.exception(f"Error getting chart image: {str(e)}")
+        logger.error(f"Error getting chart image: {str(e)}")
         return None
 
 @app.post("/calculate-rr")
@@ -416,7 +421,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get user state
         chat_id = str(query.message.chat_id)
         user_state = user_states.get(chat_id, {})
-        original_text = query.message.text
         
         if query.data == "technical_analysis":
             if not all(k in user_state for k in ["instrument", "timeframe"]):
@@ -428,36 +432,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 
             try:
                 # Show loading state
-                loading_text = f"{original_text}\n\n📊 Generating technical analysis..."
                 await query.edit_message_text(
-                    text=loading_text,
+                    text="📊 Generating technical analysis chart...",
                     parse_mode=ParseMode.MARKDOWN
                 )
                 
-                # Get technical analysis data
-                chart_data = await get_chart_image(user_state["instrument"], user_state["timeframe"])
-                if not chart_data:
-                    raise Exception("Failed to get technical analysis")
+                # Get chart image from TradingView service
+                chart_image = await get_chart_image(user_state["instrument"], user_state["timeframe"])
+                if not chart_image:
+                    raise Exception("Failed to get chart image")
                     
-                # Add technical analysis to original message
-                analysis_text = f"{original_text}\n\n📊 **Technical Analysis:**\n"
-                analysis_text += f"- MACD: Bullish Cross ✅\n"
-                analysis_text += f"- RSI: 58.3 (Neutral)\n"
-                analysis_text += f"- Support: {user_state.get('entry_price', '0.0000')}\n"
-                analysis_text += f"- Resistance: {user_state.get('take_profit', '0.0000')}"
+                # Create back button
+                keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                 
-                # Update message with analysis
-                await query.edit_message_text(
-                    text=analysis_text,
-                    parse_mode=ParseMode.MARKDOWN
+                # Send chart as new message
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=chart_image,
+                    caption=f"📊 Technical Analysis for {user_state['instrument']} ({user_state['timeframe']})\n\nShowing RSI, MACD and Bollinger Bands",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 
             except Exception as e:
                 logger.error(f"Error getting technical analysis: {str(e)}")
-                error_text = f"{original_text}\n\nSorry, I couldn't generate the technical analysis. Please try again later."
-                await query.edit_message_text(
-                    text=error_text,
-                    parse_mode=ParseMode.MARKDOWN
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="Sorry, I couldn't generate the technical analysis chart. Please try again later."
                 )
                 
         elif query.data == "market_sentiment":
@@ -470,7 +470,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 
             try:
                 # Show loading state
-                loading_text = f"{original_text}\n\n📰 Analyzing market sentiment..."
+                loading_text = f"📰 Analyzing market sentiment..."
                 await query.edit_message_text(
                     text=loading_text,
                     parse_mode=ParseMode.MARKDOWN
@@ -481,26 +481,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if not sentiment_data:
                     raise Exception("Failed to get market sentiment")
                     
-                # Add sentiment to original message
-                sentiment_text = f"{original_text}\n\n😎 **Market Sentiment:**\n"
-                sentiment_text += f"- Buy Pressure: 78% 🟢\n"
-                sentiment_text += f"- Volatility: Medium ⚠️\n"
-                sentiment_text += f"- News Impact: {sentiment_data}"
+                # Create back button
+                keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                 
-                # Update message with sentiment
-                await query.edit_message_text(
-                    text=sentiment_text,
+                # Send sentiment as new message
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"📰 Market Sentiment Analysis for {user_state['instrument']}\n\n{sentiment_data}\n\n_Based on recent market news and events._",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN
                 )
+                
+                # Restore original message
+                original_message = user_state.get("original_message", "")
+                if original_message:
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
+                            InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
+                        ]
+                    ]
+                    await query.edit_message_text(
+                        text=original_message,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
                 
             except Exception as e:
                 logger.error(f"Error getting market sentiment: {str(e)}")
-                error_text = f"{original_text}\n\nSorry, I couldn't analyze the market sentiment. Please try again later."
-                await query.edit_message_text(
-                    text=error_text,
-                    parse_mode=ParseMode.MARKDOWN
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="Sorry, I couldn't analyze the market sentiment. Please try again later."
                 )
                 
+        elif query.data == "back_to_signal":
+            # Delete the current message (analysis)
+            await bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
+            
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
         try:
