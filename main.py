@@ -172,7 +172,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 
                 # Update the current message to show loading
                 await query.edit_message_text(
-                    text=f"{message_data['text']}\n\n🔄 Analyzing market sentiment...",
+                    text="🔄 Analyzing market sentiment...",
                     parse_mode='Markdown'
                 )
                 
@@ -188,7 +188,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         if response.status_code != 200:
                             keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                             await query.edit_message_text(
-                                text=f"{message_data['text']}\n\n❌ Failed to get news",
+                                text="❌ Failed to get news",
                                 parse_mode='Markdown',
                                 reply_markup=InlineKeyboardMarkup(keyboard)
                             )
@@ -198,7 +198,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         if not news_data.get("articles"):
                             keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                             await query.edit_message_text(
-                                text=f"{message_data['text']}\n\n❌ No news articles found",
+                                text="❌ No news articles found",
                                 parse_mode='Markdown',
                                 reply_markup=InlineKeyboardMarkup(keyboard)
                             )
@@ -217,7 +217,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         if response.status_code != 200:
                             keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                             await query.edit_message_text(
-                                text=f"{message_data['text']}\n\n❌ Failed to get sentiment",
+                                text="❌ Failed to get sentiment",
                                 parse_mode='Markdown',
                                 reply_markup=InlineKeyboardMarkup(keyboard)
                             )
@@ -228,9 +228,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Update the current message with analysis
+                        # Show only the analysis on this "page"
                         await query.edit_message_text(
-                            text=f"{message_data['text']}\n\n{data['analysis']}",
+                            text=data["analysis"],
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
@@ -239,7 +239,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         logger.error(f"Error getting sentiment: {str(e)}")
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         await query.edit_message_text(
-                            text=f"{message_data['text']}\n\n❌ An error occurred",
+                            text="❌ An error occurred",
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
@@ -250,7 +250,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 try:
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     await query.edit_message_text(
-                        text=f"{message_data['text']}\n\n❌ An error occurred",
+                        text="❌ An error occurred",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
