@@ -397,7 +397,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
                 # Show loading message
-                await query.edit_message_text(
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
                     text=f"🔄 Generating chart for {instrument} {timeframe}...",
                     reply_markup=reply_markup
                 )
@@ -428,7 +430,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             raise Exception(f"Failed to decode image data: {str(e)}")
                         
                         # Send chart with title
-                        await query.edit_message_media(
+                        await bot.edit_message_media(
+                            chat_id=chat_id,
+                            message_id=message_id,
                             media=InputMediaPhoto(
                                 media=image_bytes,
                                 caption=f"📊 Technical Analysis for {instrument} ({timeframe})",
@@ -444,7 +448,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         
             except Exception as e:
                 logger.error(f"Error processing chart request: {str(e)}")
-                await query.edit_message_text(
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
                     text=f"❌ Error generating chart: {str(e)}",
                     reply_markup=reply_markup
                 )
@@ -457,7 +463,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     message = state["signal_data"]["message"]
                     markup = state["signal_data"]["markup"]
                     
-                    await query.edit_message_text(
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
                         text=message,
                         reply_markup=markup,
                         parse_mode='Markdown'
@@ -467,7 +475,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     raise Exception("No signal data found")
             except Exception as e:
                 logger.error(f"Error handling back button: {str(e)}")
-                await query.edit_message_text(
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
                     text="❌ Error: Could not restore original message",
                     reply_markup=None
                 )
