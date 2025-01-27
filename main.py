@@ -160,8 +160,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Create image data from base64
                         image_data = base64.b64decode(chart_data["image"])
                         
-                        # Send the chart image
-                        await context.bot.send_photo(
+                        # Send the chart image using bot from query
+                        await query.get_bot().send_photo(
                             chat_id=query.message.chat_id,
                             photo=image_data,
                             caption=f"📊 Technical Analysis for {message_data['symbol']}",
