@@ -157,19 +157,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
         elif query.data == "market_sentiment":
             try:
+                # Immediately acknowledge the button press
+                await query.answer()
+                
                 # Get symbol from stored message
                 message_data = messages.get(message_id)
                 if not message_data:
                     logger.error("No message data found")
-                    await query.answer("Message data not found")
+                    await bot.send_message(chat_id=chat_id, text="Message data not found")
                     return
 
                 logger.info(f"Getting news for symbol: {message_data['symbol']}")
                 
                 # First get news from signal processor
                 signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
-                async with httpx.AsyncClient(timeout=60.0) as client:  
+                async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
+                        # Send "Analyzing market..." message
+                        status_message = await bot.send_message(
+                            chat_id=chat_id,
+                            text="🔄 Analyzing market sentiment...",
+                            parse_mode='Markdown'
+                        )
+                        
                         response = await client.get(
                             signal_processor_url,
                             params={"instrument": message_data["symbol"]}
@@ -179,7 +189,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         
                         if response.status_code != 200:
                             logger.error(f"Failed to get news: {response.status_code} - {response.text}")
-                            await query.answer("Failed to get news")
+                            await bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=status_message.message_id,
+                                text="❌ Failed to get news"
+                            )
                             return
                         
                         news_data = response.json()
@@ -187,7 +201,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         
                         if not news_data.get("articles"):
                             logger.error("No news articles found")
-                            await query.answer("No news articles found")
+                            await bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=status_message.message_id,
+                                text="❌ No news articles found"
+                            )
                             return
 
                         # Send news to AI service for analysis
@@ -205,42 +223,51 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         
                         if response.status_code != 200:
                             logger.error(f"Failed to get sentiment: {response.status_code} - {response.text}")
-                            await query.answer("Failed to get sentiment")
+                            await bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=status_message.message_id,
+                                text="❌ Failed to get sentiment"
+                            )
                             return
                         
                         data = response.json()
                         logger.info(f"Got sentiment data: {data}")
-                        
-                        if data.get("status") != "success":
-                            logger.error(f"Sentiment service error: {data}")
-                            await query.answer("Sentiment service error")
-                            return
 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Send sentiment with Back button
-                        await bot.send_message(
+                        # Edit status message with analysis
+                        await bot.edit_message_text(
                             chat_id=chat_id,
+                            message_id=status_message.message_id,
                             text=data["analysis"],
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
                         
-                        await query.answer()
-                        
                     except httpx.RequestError as e:
                         logger.error(f"HTTP Request failed: {str(e)}")
-                        await query.answer("Failed to connect to service")
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=status_message.message_id,
+                            text="❌ Failed to connect to service"
+                        )
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse JSON: {str(e)}")
-                        await query.answer("Invalid response from service")
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=status_message.message_id,
+                            text="❌ Invalid response from service"
+                        )
 
             except Exception as e:
                 logger.error(f"Error in market sentiment handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
-                await query.answer("An error occurred")
-            
+                try:
+                    await bot.send_message(chat_id=chat_id, text="❌ An error occurred")
+                except:
+                    pass
+
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
         await query.answer("An error occurred")
