@@ -316,7 +316,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         # Send signal to Signal AI Service for formatting if not already formatted
         if "formatted_message" not in signal_data:
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient() as client:
                     response = await client.post(
                         f"{SIGNAL_AI_SERVICE}/format-signal",
                         json=signal_data
@@ -423,36 +423,52 @@ async def telegram_webhook(request: Request):
                 logger.info(f"Processing sentiment analysis for {instrument}")
                 
                 try:
-                    # Get latest news
-                    news_data = {
-                        "instrument": instrument,
-                        "articles": [
-                            {"title": "COMMENT-EUR/USD longs need Fed, data to validate bullish techs, spreads", 
-                             "content": "COMMENT-EUR/USD longs need Fed, data to validate bullish techs, spreads"},
-                            {"title": "FX options wrap - Safe-haven vols surge as risk aversion bites",
-                             "content": "FX options wrap - Safe-haven vols surge as risk aversion bites"}
-                        ]
-                    }
-                    
-                    # Get sentiment analysis
-                    analysis = await get_news_analysis(instrument, news_data["articles"])
-                    
                     # Create back button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    # Show loading message
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"🔄 Analyzing market sentiment for {instrument}...",
+                        reply_markup=reply_markup
+                    )
+
+                    # Get sentiment analysis from News AI Service
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(
+                            f"{NEWS_AI_SERVICE}/analyze-news",
+                            json={
+                                "instrument": instrument,
+                                "articles": [
+                                    {"title": "COMMENT-EUR/USD longs need Fed, data to validate bullish techs, spreads", 
+                                     "content": "COMMENT-EUR/USD longs need Fed, data to validate bullish techs, spreads"},
+                                    {"title": "FX options wrap - Safe-haven vols surge as risk aversion bites",
+                                     "content": "FX options wrap - Safe-haven vols surge as risk aversion bites"}
+                                ]
+                            }
+                        )
+                        response.raise_for_status()
+                        analysis_data = response.json()
                     
                     # Send analysis
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
-                        text=analysis,
+                        text=analysis_data["analysis"],
                         reply_markup=reply_markup,
                         parse_mode='Markdown'
                     )
                     
                 except Exception as e:
                     logger.error(f"Error processing sentiment: {str(e)}")
-                    await query.answer("Error processing sentiment analysis")
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"❌ Error analyzing market sentiment: {str(e)}",
+                        reply_markup=reply_markup
+                    )
             
             # Handle chart button
             elif callback_data.startswith("chart_"):
