@@ -85,6 +85,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         
         # Store original message
         messages[str(sent_message.message_id)] = {
+            "original_text": message,
             "text": message,
             "symbol": signal_request.signal_data["instrument"]
         }
@@ -139,7 +140,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         elif query.data == "back_to_signal":
             # Get original message
-            original_message = messages[message_id]["text"]
+            message_data = messages[message_id]
             
             # Restore original message with Technical Analysis button
             keyboard = [[
@@ -148,7 +149,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ]]
             
             await query.message.edit_text(
-                text=original_message,
+                text=message_data["original_text"],
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -164,53 +165,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 message_data = messages.get(message_id)
                 if not message_data:
                     logger.error("No message data found")
-                    await bot.send_message(chat_id=chat_id, text="Message data not found")
+                    await query.edit_message_text("Message data not found")
                     return
 
                 logger.info(f"Getting news for symbol: {message_data['symbol']}")
                 
-                # First get news from signal processor
+                # Update the current message to show loading
+                await query.edit_message_text(
+                    text=f"{message_data['text']}\n\n🔄 Analyzing market sentiment...",
+                    parse_mode='Markdown'
+                )
+                
+                # Get news from signal processor
                 signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
-                        # Send "Analyzing market..." message
-                        status_message = await bot.send_message(
-                            chat_id=chat_id,
-                            text="🔄 Analyzing market sentiment...",
-                            parse_mode='Markdown'
-                        )
-                        
                         response = await client.get(
                             signal_processor_url,
                             params={"instrument": message_data["symbol"]}
                         )
-                        logger.info(f"Signal processor response: {response.status_code}")
-                        logger.info(f"Signal processor response body: {response.text}")
                         
                         if response.status_code != 200:
-                            logger.error(f"Failed to get news: {response.status_code} - {response.text}")
-                            await bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=status_message.message_id,
-                                text="❌ Failed to get news"
+                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            await query.edit_message_text(
+                                text=f"{message_data['text']}\n\n❌ Failed to get news",
+                                parse_mode='Markdown',
+                                reply_markup=InlineKeyboardMarkup(keyboard)
                             )
                             return
                         
                         news_data = response.json()
-                        logger.info(f"Got news data: {news_data}")
-                        
                         if not news_data.get("articles"):
-                            logger.error("No news articles found")
-                            await bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=status_message.message_id,
-                                text="❌ No news articles found"
+                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            await query.edit_message_text(
+                                text=f"{message_data['text']}\n\n❌ No news articles found",
+                                parse_mode='Markdown',
+                                reply_markup=InlineKeyboardMarkup(keyboard)
                             )
                             return
 
                         # Send news to AI service for analysis
                         sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
-                        logger.info("Sending news to AI service")
                         response = await client.post(
                             sentiment_url,
                             json={
@@ -218,56 +213,79 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                                 "articles": news_data["articles"]
                             }
                         )
-                        logger.info(f"AI service response: {response.status_code}")
-                        logger.info(f"AI service response body: {response.text}")
                         
                         if response.status_code != 200:
-                            logger.error(f"Failed to get sentiment: {response.status_code} - {response.text}")
-                            await bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=status_message.message_id,
-                                text="❌ Failed to get sentiment"
+                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            await query.edit_message_text(
+                                text=f"{message_data['text']}\n\n❌ Failed to get sentiment",
+                                parse_mode='Markdown',
+                                reply_markup=InlineKeyboardMarkup(keyboard)
                             )
                             return
                         
                         data = response.json()
-                        logger.info(f"Got sentiment data: {data}")
 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Edit status message with analysis
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=status_message.message_id,
-                            text=data["analysis"],
+                        # Update the current message with analysis
+                        await query.edit_message_text(
+                            text=f"{message_data['text']}\n\n{data['analysis']}",
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
                         
-                    except httpx.RequestError as e:
-                        logger.error(f"HTTP Request failed: {str(e)}")
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=status_message.message_id,
-                            text="❌ Failed to connect to service"
-                        )
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON: {str(e)}")
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=status_message.message_id,
-                            text="❌ Invalid response from service"
+                    except Exception as e:
+                        logger.error(f"Error getting sentiment: {str(e)}")
+                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        await query.edit_message_text(
+                            text=f"{message_data['text']}\n\n❌ An error occurred",
+                            parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(keyboard)
                         )
 
             except Exception as e:
                 logger.error(f"Error in market sentiment handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 try:
-                    await bot.send_message(chat_id=chat_id, text="❌ An error occurred")
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    await query.edit_message_text(
+                        text=f"{message_data['text']}\n\n❌ An error occurred",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
                 except:
                     pass
-
+                    
+        elif query.data == "back_to_signal":
+            try:
+                # Get original message data
+                message_data = messages.get(message_id)
+                if not message_data:
+                    logger.error("No message data found")
+                    await query.answer("Message data not found")
+                    return
+                    
+                # Restore original keyboard
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
+                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
+                    ]
+                ]
+                
+                # Restore original message
+                await query.edit_message_text(
+                    text=message_data["text"],
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                await query.answer()
+                
+            except Exception as e:
+                logger.error(f"Error in back_to_signal handler: {str(e)}")
+                await query.answer("An error occurred")
+                
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
         await query.answer("An error occurred")
