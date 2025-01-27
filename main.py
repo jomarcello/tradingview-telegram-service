@@ -572,7 +572,7 @@ def format_signal_message(signal_data: Dict[str, Any]) -> str:
 --------------------
 
 <b>🤖 SigmaPips AI Verdict:</b>
-{signal_data.get('ai_verdict', 'AI verdict not available.')}"""
+{signal_data.get('ai_verdict', 'AI verdict not available.')}\n"""
         
         return message
     except Exception as e:
