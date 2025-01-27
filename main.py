@@ -57,12 +57,7 @@ Risk Management:
 --------------------
 
 🤖 SigmaPips AI Verdict:
-The {signal_data['instrument']} {direction.split()[0].lower()} signal aligns with a bullish momentum confirmed by short-term indicators, suggesting an upward move. With a tight stop loss and a favorable risk/reward ratio, this setup offers a promising opportunity for disciplined traders.
-
-Remember:
-- Keep it concise and professional
-- Use emojis sparingly
-- Format numbers correctly"""
+The {signal_data['instrument']} {direction.split()[0].lower()} signal aligns with a bullish momentum confirmed by short-term indicators, suggesting an upward move. With a tight stop loss and a favorable risk/reward ratio, this setup offers a promising opportunity for disciplined traders."""
     return message
 
 @app.post("/send-signal")
@@ -74,7 +69,8 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         
         # Create keyboard markup
         keyboard = [[
-            InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis")
+            InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
+            InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
         ]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -146,7 +142,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # Restore original message with Technical Analysis button
             keyboard = [[
-                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis")
+                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
+                InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
             ]]
             
             await query.message.edit_text(
@@ -156,6 +153,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             
             await query.answer()
+            
+        elif query.data == "market_sentiment":
+            # Get symbol from stored message
+            symbol = messages[message_id]["symbol"]
+            
+            # Get market sentiment
+            sentiment_url = f"https://tradingview-chart-service-production.up.railway.app/sentiment?symbol={symbol}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(sentiment_url)
+                if response.status_code != 200:
+                    logger.error(f"Failed to get sentiment: {response.status_code}")
+                    await query.answer("Failed to get sentiment")
+                    return
+                
+                data = response.json()
+                if data.get("status") != "success":
+                    logger.error(f"Sentiment service error: {data}")
+                    await query.answer("Sentiment service error")
+                    return
+                
+                # Create keyboard with Back button
+                keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                
+                # Send sentiment with Back button
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"Market Sentiment for {symbol}: {data['sentiment']}",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                
+                await query.answer()
             
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
