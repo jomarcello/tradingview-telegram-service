@@ -331,28 +331,39 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         if chat_id == "all":
             subscribers = await get_subscribers()
             for subscriber in subscribers:
-                sub_chat_id = str(subscriber["chat_id"])
+                # Clean the chat_id (remove any whitespace)
+                sub_chat_id = str(subscriber["chat_id"]).strip()
+                
                 # Store in user state
                 user_states[sub_chat_id] = {
                     "instrument": signal_data["instrument"],
                     "timeframe": signal_data["timeframe"],
                     "original_message": message
                 }
-                # Send message
-                await bot.send_message(
-                    chat_id=sub_chat_id,
-                    text=message,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.HTML
-                )
-                logger.info(f"Sent signal to subscriber {sub_chat_id}")
+                
+                try:
+                    # Send message
+                    await bot.send_message(
+                        chat_id=sub_chat_id,
+                        text=message,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.HTML
+                    )
+                    logger.info(f"Sent signal to subscriber {sub_chat_id}")
+                except Exception as e:
+                    logger.error(f"Failed to send to {sub_chat_id}: {str(e)}")
+                    continue
         else:
+            # Clean the chat_id (remove any whitespace)
+            chat_id = str(chat_id).strip()
+            
             # Store in user state
             user_states[chat_id] = {
                 "instrument": signal_data["instrument"],
                 "timeframe": signal_data["timeframe"],
                 "original_message": message
             }
+            
             # Send message
             await bot.send_message(
                 chat_id=chat_id,
@@ -528,32 +539,36 @@ async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> 
 def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format signal message"""
     try:
-        # Create basic signal format
+        # If we already have a formatted message from the AI service, use that
+        if "formatted_message" in signal_data:
+            return signal_data["formatted_message"]
+            
+        # Otherwise, create basic signal format with HTML tags
         direction_emoji = "📈" if signal_data.get("direction", "").lower() == "buy" else "📉"
         
-        message = f"""🚨 New Trading Signal 🚨
+        message = f"""<b>🚨 New Trading Signal 🚨</b>
 
-Instrument: {signal_data.get('instrument', 'Unknown')}
-Action: {signal_data.get('direction', 'Unknown').upper()} {direction_emoji}
+<b>Instrument:</b> {signal_data.get('instrument', 'Unknown')}
+<b>Action:</b> {signal_data.get('direction', 'Unknown').upper()} {direction_emoji}
 
-Entry Price: {signal_data.get('entry_price', 'Unknown')}
-Stop Loss: {signal_data.get('stop_loss', 'Unknown')} 🛑
-Take Profit: {signal_data.get('entry_price', 0) + 200} 🎯
+<b>Entry Price:</b> {signal_data.get('entry_price', 'Unknown')}
+<b>Stop Loss:</b> {signal_data.get('stop_loss', 'Unknown')} 🛑
+<b>Take Profit:</b> {signal_data.get('take_profit', 'Unknown')} 🎯
 
-Timeframe: {signal_data.get('timeframe', 'Unknown')}
-Strategy: {signal_data.get('strategy', 'Unknown')}
+<b>Timeframe:</b> {signal_data.get('timeframe', 'Unknown')}
+<b>Strategy:</b> {signal_data.get('strategy', 'Unknown')}
 
 --------------------
 
-Risk Management:
+<b>Risk Management:</b>
 • Position size: 1-2% max
 • Use proper stop loss
 • Follow your trading plan
 
 --------------------
 
-🤖 SigmaPips AI Verdict:
-This {signal_data.get('instrument', '')} {signal_data.get('direction', '').lower()} signal follows a trend-following strategy within a {signal_data.get('timeframe', '')}-hour timeframe, aiming for a tight profit margin with a calculated risk/reward ratio. The setup suggests confidence in the current uptrend's continuity, making it a promising short-term trade."""
+<b>🤖 SigmaPips AI Verdict:</b>
+{signal_data.get('ai_verdict', 'AI verdict not available.')}"""
         
         return message
     except Exception as e:
