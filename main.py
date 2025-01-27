@@ -50,8 +50,8 @@ SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-a
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
 CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service-production.up.railway.app")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://tradingview-telegram-service-production.up.railway.app/webhook")
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://your-supabase-url.supabase.co/rest/v1/subscribers")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "your-supabase-key")
+SUPABASE_URL = "https://utigkgjcyqnrhpndzqhs.supabase.co/rest/v1/subscribers"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0aWdrZ2pjeXFucmhwbmR6cWhzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNjMyMzA1NiwiZXhwIjoyMDUxODk5MDU2fQ.8JovzmGQofC4oC2016P7aa6FZQESF3UNSjUTruIYWbg"
 
 logger.info(f"Initialized with services: SIGNAL={SIGNAL_AI_SERVICE}, NEWS={NEWS_AI_SERVICE}, CHART={CHART_SERVICE}")
 
@@ -564,6 +564,26 @@ async def health_check():
     """Health check endpoint"""
     logger.info("Health check endpoint called")
     return {"status": "ok", "service": "tradingview-telegram-service"}
+
+async def get_subscribers() -> List[dict]:
+    """Get all subscribers from Supabase."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{SUPABASE_URL}?select=*",
+                headers={
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': f'Bearer {SUPABASE_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            response.raise_for_status()
+            subscribers = response.json()
+            logger.info(f"Found {len(subscribers)} subscribers")
+            return subscribers
+    except Exception as e:
+        logger.error(f"Error getting subscribers: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting subscribers: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
