@@ -6,7 +6,15 @@ from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler
+from telegram.ext import (
+    CallbackContext, 
+    Application, 
+    CommandHandler, 
+    CallbackQueryHandler, 
+    ConversationHandler, 
+    MessageHandler,
+    ContextTypes
+)
 from dotenv import load_dotenv
 import base64
 import asyncio
