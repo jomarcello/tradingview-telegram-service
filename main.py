@@ -5,7 +5,7 @@ import httpx
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ParseMode
 from telegram.ext import (
     CallbackContext, 
     Application, 
@@ -315,8 +315,8 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         # Create keyboard markup with sentiment and chart buttons
         keyboard = [
             [
-                InlineKeyboardButton("📊 Technical Analysis", callback_data=f"chart_{signal_data['instrument']}_{signal_data['timeframe']}"),
-                InlineKeyboardButton("📰 Market Sentiment", callback_data=f"sentiment_{signal_data['instrument']}")
+                InlineKeyboardButton("📊 Technical Analysis", callback_data=f"technical_analysis"),
+                InlineKeyboardButton("📰 Market Sentiment", callback_data=f"market_sentiment")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -382,113 +382,125 @@ async def send_signal(signal_request: SignalRequest) -> dict:
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses"""
     query = update.callback_query
-    chat_id = query.message.chat_id
-    message_id = query.message.message_id
-    callback_data = query.data
+    await query.answer()
     
     try:
-        # Handle chart button
-        if callback_data.startswith("chart_"):
-            try:
-                # Parse instrument and timeframe
-                _, instrument, timeframe = callback_data.split("_")
-                logger.info(f"Processing chart request for {instrument} {timeframe}")
+        # Get user state
+        chat_id = str(query.message.chat_id)
+        user_state = user_states.get(chat_id, {})
+        
+        if query.data == "back_to_signal":
+            if "original_message" in user_state:
+                # Get the original message and keyboard
+                original_message = user_state["original_message"]
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📊 Technical Analysis", callback_data=f"technical_analysis"),
+                        InlineKeyboardButton("📰 Market Sentiment", callback_data=f"market_sentiment")
+                    ]
+                ]
                 
-                # Create back button
-                keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                # Show loading message
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=f"🔄 Generating chart for {instrument} {timeframe}...",
-                    reply_markup=reply_markup
+                # Edit message back to original
+                await query.edit_message_text(
+                    text=original_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
                 )
+                return
                 
-                # Get chart from Chart Service
+        elif query.data == "technical_analysis":
+            if not all(k in user_state for k in ["instrument", "timeframe"]):
+                await query.edit_message_text("Error: Missing instrument or timeframe information")
+                return
+                
+            instrument = user_state["instrument"]
+            timeframe = user_state["timeframe"]
+            
+            # Show loading message
+            loading_message = await query.edit_message_text("🔄 Generating technical analysis...")
+            
+            try:
+                # Get chart image
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
-                        f"{CHART_SERVICE}/capture-chart",
+                        f"{CHART_SERVICE}/generate-chart",
                         json={
-                            "symbol": instrument, 
-                            "timeframe": timeframe,
-                            "chart_type": "tradingview"
+                            "instrument": instrument,
+                            "timeframe": timeframe
                         }
                     )
                     response.raise_for_status()
                     chart_data = response.json()
                     
-                    if chart_data.get("status") == "success":
-                        # Get image data
-                        image_data = chart_data.get("image")
-                        if not image_data:
-                            raise Exception("No image data received from chart service")
-                        
-                        # Convert base64 to bytes
-                        try:
-                            image_bytes = base64.b64decode(image_data)
-                        except Exception as e:
-                            raise Exception(f"Failed to decode image data: {str(e)}")
-                        
-                        # Send chart with title
-                        await bot.edit_message_media(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            media=InputMediaPhoto(
-                                media=image_bytes,
-                                caption=f"📊 Technical Analysis for {instrument} ({timeframe})",
-                                parse_mode='Markdown'
-                            ),
-                            reply_markup=reply_markup
-                        )
-                        logger.info("Successfully sent chart image")
-                    else:
-                        error_msg = chart_data.get("error", "Unknown error occurred")
-                        logger.error(f"Chart service error: {error_msg}")
-                        raise Exception(f"Chart service error: {error_msg}")
-                        
-            except Exception as e:
-                logger.error(f"Error processing chart request: {str(e)}")
-                await bot.edit_message_text(
+                # Send chart image
+                await context.bot.send_photo(
                     chat_id=chat_id,
-                    message_id=message_id,
-                    text=f"❌ Error generating chart: {str(e)}",
-                    reply_markup=reply_markup
+                    photo=chart_data["chart_url"],
+                    caption=f"📊 Technical Analysis for {instrument} ({timeframe})",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")
+                    ]])
                 )
                 
-        # Handle back button
-        elif callback_data == "back_to_signal":
-            try:
-                if chat_id in user_states:
-                    state = user_states[chat_id]
-                    message = state["signal_data"]["message"]
-                    markup = state["signal_data"]["markup"]
-                    
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=message,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    logger.info("Successfully restored original message")
-                else:
-                    raise Exception("No signal data found")
+                # Delete loading message
+                await loading_message.delete()
+                
             except Exception as e:
-                logger.error(f"Error handling back button: {str(e)}")
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text="❌ Error: Could not restore original message",
-                    reply_markup=None
+                logger.error(f"Error generating chart: {str(e)}")
+                await query.edit_message_text(
+                    f"❌ Error generating chart: {str(e)}",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")
+                    ]])
                 )
-        
-        await query.answer()
-        
+                
+        elif query.data == "market_sentiment":
+            if "instrument" not in user_state:
+                await query.edit_message_text("Error: Missing instrument information")
+                return
+                
+            instrument = user_state["instrument"]
+            
+            # Show loading message
+            loading_message = await query.edit_message_text("🔄 Analyzing market sentiment...")
+            
+            try:
+                # Get sentiment analysis
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{NEWS_AI_SERVICE}/analyze-sentiment",
+                        json={"instrument": instrument}
+                    )
+                    response.raise_for_status()
+                    sentiment_data = response.json()
+                    
+                # Format sentiment message
+                sentiment_message = f"📊 Market Sentiment for {instrument}:\n\n{sentiment_data['sentiment_analysis']}"
+                
+                # Send sentiment analysis
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=sentiment_message,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")
+                    ]])
+                )
+                
+                # Delete loading message
+                await loading_message.delete()
+                
+            except Exception as e:
+                logger.error(f"Error analyzing sentiment: {str(e)}")
+                await query.edit_message_text(
+                    f"❌ Error analyzing sentiment: {str(e)}",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")
+                    ]])
+                )
+    
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
-        await query.answer(text="❌ An error occurred")
+        await query.edit_message_text(f"❌ An error occurred: {str(e)}")
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
