@@ -476,14 +476,15 @@ async def telegram_webhook(request: Request):
                             
                             # Get technical analysis from Signal AI Service
                             analysis_response = await client.post(
-                                f"{SIGNAL_AI_SERVICE}/analyze-chart",
+                                f"{SIGNAL_AI_SERVICE}/analyze-technical",
                                 json={
                                     "instrument": instrument,
                                     "timeframe": timeframe,
-                                    "action": user_states[chat_id]["signal_data"]["direction"],
+                                    "direction": user_states[chat_id]["signal_data"]["direction"],
                                     "entry_price": user_states[chat_id]["signal_data"]["entry_price"],
                                     "stop_loss": user_states[chat_id]["signal_data"]["stop_loss"],
-                                    "take_profit": user_states[chat_id]["signal_data"]["take_profit"]
+                                    "take_profit": user_states[chat_id]["signal_data"]["take_profit"],
+                                    "strategy": user_states[chat_id]["signal_data"]["strategy"]
                                 }
                             )
                             analysis_response.raise_for_status()
