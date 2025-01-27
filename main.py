@@ -528,6 +528,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             pass
 
+@bot.callback_query_handler(func=lambda call: call.data == "technical_analysis")
+async def handle_technical_analysis(call):
+    try:
+        # Get the symbol from the original message
+        symbol = get_symbol_from_message(call.message.text)
+        if not symbol:
+            await bot.answer_callback_query(call.id, "Could not find symbol in message")
+            return
+
+        # Call TradingView chart service
+        chart_url = f"https://tradingview-chart-service-production.up.railway.app/screenshot?symbol={symbol}&interval=15m"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(chart_url)
+            if response.status_code != 200:
+                logger.error(f"Failed to get chart: {response.status}")
+                await bot.answer_callback_query(call.id, "Failed to get chart")
+                return
+                
+            data = response.json()
+            if data.get("status") != "success":
+                logger.error(f"Chart service error: {data}")
+                await bot.answer_callback_query(call.id, "Chart service error")
+                return
+                
+            # Convert base64 image
+            image_data = base64.b64decode(data["image"])
+            
+            # Send photo
+            await bot.send_photo(
+                chat_id=call.message.chat.id,
+                photo=image_data,
+                reply_to_message_id=call.message.message_id,
+                caption=f"TradingView Chart for {symbol} (15m timeframe)"
+            )
+            
+            await bot.answer_callback_query(call.id)
+            
+    except Exception as e:
+        logger.error(f"Error in technical analysis: {str(e)}")
+        await bot.answer_callback_query(call.id, "An error occurred")
+
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     """Handle Telegram webhook updates"""
