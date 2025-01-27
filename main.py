@@ -428,14 +428,10 @@ async def telegram_webhook(request: Request):
             
             # Handle chart button
             elif callback_data.startswith("chart_"):
-                logger.info(f"Processing technical analysis request: {callback_data}")
                 try:
-                    parts = callback_data.split("_")
-                    if len(parts) != 3:
-                        raise ValueError(f"Invalid callback data format: {callback_data}")
-                        
-                    instrument = parts[1]
-                    timeframe = parts[2]
+                    # Parse instrument and timeframe
+                    _, instrument, timeframe = callback_data.split("_")
+                    logger.info(f"Processing chart request for {instrument} {timeframe}")
                     
                     # Create back button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
@@ -445,11 +441,11 @@ async def telegram_webhook(request: Request):
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
-                        text=f"📊 Loading chart for {instrument} ({timeframe})...",
+                        text=f"🔄 Generating chart for {instrument} {timeframe}...",
                         reply_markup=reply_markup
                     )
                     
-                    # Get chart image
+                    # Get chart from Chart Service
                     async with httpx.AsyncClient(timeout=30.0) as client:
                         response = await client.post(
                             f"{CHART_SERVICE}/capture-chart",
@@ -458,23 +454,27 @@ async def telegram_webhook(request: Request):
                         response.raise_for_status()
                         chart_data = response.json()
                         
-                    if "image" in chart_data:
-                        # Convert base64 to bytes
-                        image_bytes = base64.b64decode(chart_data["image"])
-                        
-                        # Send chart
-                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                        await bot.send_photo(
-                            chat_id=chat_id,
-                            photo=image_bytes,
-                            caption=f"📈 Technical Analysis for {instrument} ({timeframe})",
-                            reply_markup=reply_markup
-                        )
-                    else:
-                        raise ValueError("No image data in response")
-                        
+                        if chart_data.get("status") == "success":
+                            # Send chart image
+                            await bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{chart_data.get('analysis', '')}",
+                                reply_markup=reply_markup,
+                                parse_mode='Markdown'
+                            )
+                            
+                            if chart_data.get("image"):
+                                await bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo=chart_data["image"],
+                                    caption=f"TradingView Chart - {instrument} {timeframe}"
+                                )
+                        else:
+                            raise Exception(f"Chart service error: {chart_data.get('error', 'Unknown error')}")
+                            
                 except Exception as e:
-                    logger.error(f"Error processing chart: {str(e)}")
+                    logger.error(f"Error processing chart request: {str(e)}")
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
