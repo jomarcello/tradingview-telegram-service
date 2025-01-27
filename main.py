@@ -285,15 +285,22 @@ async def calculate_risk_reward(
 async def init_webhook():
     """Initialize bot and set webhook"""
     try:
-        webhook_info = await bot.get_webhook_info()
-        logger.info(f"Current webhook info: {webhook_info.url}")
+        # First, delete any existing webhook
+        await bot.delete_webhook()
         
-        if webhook_info.url != WEBHOOK_URL:
-            logger.info(f"Setting webhook to: {WEBHOOK_URL}")
-            await bot.set_webhook(url=WEBHOOK_URL)
-            logger.info("Webhook set successfully")
+        # Wait a moment to ensure the deletion is processed
+        await asyncio.sleep(1)
+        
+        # Set the new webhook
+        webhook_info = await bot.set_webhook(
+            url=WEBHOOK_URL,
+            allowed_updates=["message", "callback_query"],
+            max_connections=40
+        )
+        logger.info(f"Current webhook info: {WEBHOOK_URL}")
+        return webhook_info
     except Exception as e:
-        logger.error(f"Failed to set webhook: {str(e)}")
+        logger.error(f"Error setting webhook: {str(e)}")
         raise
 
 @app.on_event("startup")
