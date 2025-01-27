@@ -33,7 +33,7 @@ class SignalRequest(BaseModel):
 
 def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format the signal message"""
-    direction = "🔵 BUY" if signal_data["direction"].upper() == "LONG" else "🔴 SELL"
+    direction = "BUY 📈" if signal_data["direction"].upper() == "LONG" else "SELL 📉"
     
     message = f"""🎯 New Trading Signal 🎯
 
@@ -45,7 +45,24 @@ Stop Loss: {signal_data['sl']} 🛑
 Take Profit: {signal_data['tp']} 🎯
 
 Timeframe: {signal_data['timeframe']}
-"""
+Strategy: Test Strategy
+
+--------------------
+
+Risk Management:
+• Position size: 1-2% max
+• Use proper stop loss
+• Follow your trading plan
+
+--------------------
+
+🤖 SigmaPips AI Verdict:
+The {signal_data['instrument']} {direction.split()[0].lower()} signal aligns with a bullish momentum confirmed by short-term indicators, suggesting an upward move. With a tight stop loss and a favorable risk/reward ratio, this setup offers a promising opportunity for disciplined traders.
+
+Remember:
+- Keep it concise and professional
+- Use emojis sparingly
+- Format numbers correctly"""
     return message
 
 @app.post("/send-signal")
