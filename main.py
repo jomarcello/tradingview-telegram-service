@@ -48,7 +48,7 @@ if not BOT_TOKEN:
 
 # Service URLs
 SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
-NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
+NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
 CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service-production.up.railway.app")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://tradingview-telegram-service-production.up.railway.app/webhook")
 SUPABASE_URL = "https://utigkgjcyqnrhpndzqhs.supabase.co/rest/v1/subscribers"
