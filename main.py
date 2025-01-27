@@ -474,17 +474,28 @@ async def telegram_webhook(request: Request):
                             else:
                                 image_bytes = image_data
                             
-                            # Create analysis text
-                            analysis_text = chart_data.get('analysis', 'No analysis available.')
-                            caption = f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{analysis_text}"
+                            # Get technical analysis from Signal AI Service
+                            analysis_response = await client.post(
+                                f"{SIGNAL_AI_SERVICE}/analyze-chart",
+                                json={
+                                    "instrument": instrument,
+                                    "timeframe": timeframe,
+                                    "action": user_states[chat_id]["signal_data"]["direction"],
+                                    "entry_price": user_states[chat_id]["signal_data"]["entry_price"],
+                                    "stop_loss": user_states[chat_id]["signal_data"]["stop_loss"],
+                                    "take_profit": user_states[chat_id]["signal_data"]["take_profit"]
+                                }
+                            )
+                            analysis_response.raise_for_status()
+                            analysis_data = analysis_response.json()
                             
-                            # Send chart with analysis as caption
+                            # Create message with chart and analysis
                             await bot.edit_message_media(
                                 chat_id=chat_id,
                                 message_id=message_id,
                                 media=InputMediaPhoto(
                                     media=image_bytes,
-                                    caption=caption,
+                                    caption=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{analysis_data['analysis']}",
                                     parse_mode='Markdown'
                                 ),
                                 reply_markup=reply_markup
