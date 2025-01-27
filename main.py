@@ -324,7 +324,7 @@ async def send_signal(signal_request: SignalRequest):
         
         # Store signal data, chart image and original message in user state
         user_states[chat_id] = {
-            "signal_data": signal_data.dict(),
+            "signal_data": signal_data,  # Already a dict from JSON
             "chart_image": None,
             "original_message": {
                 "text": message,
@@ -336,8 +336,8 @@ async def send_signal(signal_request: SignalRequest):
         asyncio.create_task(
             generate_and_store_chart(
                 chat_id=chat_id,
-                instrument=signal_data.instrument,
-                timeframe=signal_data.timeframe
+                instrument=signal_data["instrument"],
+                timeframe=signal_data["timeframe"]
             )
         )
         
