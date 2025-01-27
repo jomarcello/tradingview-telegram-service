@@ -123,8 +123,8 @@ def calculate_rr_levels(instrument: str, entry_price: float, direction: str, ris
         logger.error(f"Error calculating RR levels: {str(e)}")
         return None
 
-async def get_tradingview_widget_url(symbol: str, timeframe: str) -> str:
-    """Generate TradingView widget URL with proper symbol mapping"""
+async def get_tradingview_url(symbol: str, timeframe: str) -> str:
+    """Generate TradingView chart URL"""
     # Map common symbols to TradingView format
     tv_symbol_map = {
         "EURUSD": "FX:EURUSD",
@@ -152,7 +152,7 @@ async def get_tradingview_widget_url(symbol: str, timeframe: str) -> str:
     tv_symbol = tv_symbol_map.get(symbol.upper(), symbol)
     tv_timeframe = tv_timeframe_map.get(timeframe.lower(), "60")
     
-    # Generate TradingView chart URL that works well with Telegram
+    # Generate TradingView chart URL
     url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={tv_timeframe}"
     logger.info(f"Generated TradingView URL: {url}")
     return url
@@ -382,23 +382,27 @@ async def telegram_webhook(request: Request):
                 try:
                     instrument = state["signal_data"]["instrument"]
                     timeframe = state["signal_data"]["timeframe"]
-                    logger.info(f"Updating message with chart for {instrument} {timeframe}")
                     
-                    # Get the original signal message
-                    signal_text = query.message.text
+                    # Create inline keyboard with chart options and back button
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("View Chart 📈", url=await get_tradingview_url(instrument, timeframe)),
+                            InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    # Add chart widget
-                    widget_html = await get_tradingview_widget_html(instrument, timeframe)
-                    
-                    # Update the message with both signal and chart
+                    # Update message with technical analysis view
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
-                        text=f"{signal_text}\n\n📊 Technical Analysis:\n{widget_html}",
-                        parse_mode='HTML',
-                        reply_markup=query.message.reply_markup
+                        text=f"📊 *Technical Analysis for {instrument}*\n\n"
+                             f"Timeframe: {timeframe}\n\n"
+                             f"Click 'View Chart' to open the TradingView chart in a new window.",
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup
                     )
-                    logger.info("Message updated with chart widget")
+                    logger.info("Message updated with technical analysis view")
                     
                 except KeyError as e:
                     logger.exception("Missing key in signal data")
@@ -406,6 +410,38 @@ async def telegram_webhook(request: Request):
                 except Exception as e:
                     logger.exception("Error processing technical analysis")
                     await query.answer("Error processing technical analysis request.")
+                    
+            elif callback_data == "back_to_signal":
+                logger.info("Returning to signal view")
+                state = user_states[chat_id]
+                
+                try:
+                    # Recreate original signal message
+                    signal_data = state["signal_data"]
+                    message = await format_signal(signal_data)
+                    
+                    # Recreate original keyboard
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
+                            InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    # Update message back to signal view
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=message,
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup
+                    )
+                    logger.info("Returned to signal view")
+                    
+                except Exception as e:
+                    logger.exception("Error returning to signal view")
+                    await query.answer("Error returning to signal view.")
             
             await query.answer()
             return {"status": "success"}
