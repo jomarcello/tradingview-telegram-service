@@ -324,7 +324,7 @@ async def send_signal(signal_request: SignalRequest):
         
         # Store signal data, chart image and original message in user state
         user_states[chat_id] = {
-            "signal_data": signal_data,
+            "signal_data": signal_data.dict(),
             "chart_image": None,
             "original_message": {
                 "text": message,
@@ -336,8 +336,8 @@ async def send_signal(signal_request: SignalRequest):
         asyncio.create_task(
             generate_and_store_chart(
                 chat_id=chat_id,
-                instrument=signal_data["instrument"],
-                timeframe=signal_data["timeframe"]
+                instrument=signal_data.instrument,
+                timeframe=signal_data.timeframe
             )
         )
         
@@ -351,13 +351,25 @@ async def generate_and_store_chart(chat_id: int, instrument: str, timeframe: str
     """Generate chart image and store in user state"""
     try:
         logger.info(f"Generating chart for {instrument} {timeframe}")
-        chart_image = await get_chart_image(instrument, timeframe)
         
-        if chart_image and chat_id in user_states:
-            user_states[chat_id]["chart_image"] = chart_image
-            logger.info(f"Chart image stored for chat_id {chat_id}")
-        else:
-            logger.error(f"Failed to generate/store chart for chat_id {chat_id}")
+        # Call chart service
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{CHART_SERVICE}/capture-chart",
+                json={"symbol": instrument, "timeframe": timeframe}
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get("status") == "success":
+                chart_image = data.get("image")
+                if chart_image and chat_id in user_states:
+                    user_states[chat_id]["chart_image"] = chart_image
+                    logger.info(f"Chart image stored for chat_id {chat_id}")
+                else:
+                    logger.error(f"Failed to store chart for chat_id {chat_id}")
+            else:
+                logger.error(f"Chart service returned error: {data}")
             
     except Exception as e:
         logger.exception("Error generating chart")
