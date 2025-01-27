@@ -301,47 +301,24 @@ async def send_signal(signal_request: SignalRequest) -> dict:
     try:
         logger.info(f"Received signal request for chat_id: {signal_request.chat_id}")
         
-        # Store signal data in user state
-        if signal_request.chat_id not in user_states:
-            user_states[signal_request.chat_id] = {}
-        
-        user_states[signal_request.chat_id].update({
-            "signal_data": signal_request.signal_data,
-            "news_data": signal_request.news_data
-        })
-        
         # Get signal data
         signal_data = signal_request.signal_data
         
         # Send signal to Signal AI Service for formatting if not already formatted
         if "formatted_message" not in signal_data:
             try:
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
                         f"{SIGNAL_AI_SERVICE}/format-signal",
                         json=signal_data
                     )
                     response.raise_for_status()
-                    formatted_message = response.json()["formatted_message"]
+                    signal_data.update(response.json())
             except Exception as e:
-                logger.error(f"Failed to get formatted message from Signal AI Service: {e}")
-                # Fallback to basic formatting
-                formatted_message = format_signal_message(signal_data)
-        else:
-            formatted_message = signal_data["formatted_message"]
-            
-        # Get news analysis if news data is provided
-        if signal_request.news_data:
-            try:
-                news_analysis = await get_news_analysis(
-                    signal_request.news_data["instrument"],
-                    signal_request.news_data["articles"]
-                )
-                formatted_message += f"\n\n{news_analysis}"
-            except Exception as e:
-                logger.error(f"Failed to get news analysis: {e}")
+                logger.error(f"Error formatting signal: {str(e)}")
+                return {"status": "error", "message": f"Error formatting signal: {str(e)}"}
         
-        # Create keyboard markup
+        # Create keyboard markup with sentiment and chart buttons
         keyboard = [
             [
                 InlineKeyboardButton("Market Sentiment 📊", callback_data=f"sentiment_{signal_data['instrument']}"),
@@ -351,52 +328,31 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Send message
+        formatted_message = signal_data.get("formatted_message", "")
         message = await bot.send_message(
             chat_id=signal_request.chat_id,
             text=formatted_message,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=reply_markup
         )
         
-        # Store original message for back button
+        # Store signal data and original message in user state
+        if signal_request.chat_id not in user_states:
+            user_states[signal_request.chat_id] = {}
+        
         user_states[signal_request.chat_id].update({
-            "original_message_id": message.message_id,
-            "original_text": formatted_message,
-            "original_markup": reply_markup
+            "signal_data": signal_data,
+            "news_data": signal_request.news_data,
+            "original_message": formatted_message,
+            "original_markup": reply_markup,
+            "original_message_id": message.message_id
         })
         
         return {"status": "success", "message": "Signal sent successfully"}
         
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to send signal: {str(e)}")
-
-async def generate_and_store_chart(chat_id: int, instrument: str, timeframe: str):
-    """Generate chart image and store in user state"""
-    try:
-        logger.info(f"Generating chart for {instrument} {timeframe}")
-        
-        # Call chart service
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{CHART_SERVICE}/capture-chart",
-                json={"symbol": instrument, "timeframe": timeframe}
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get("status") == "success":
-                chart_image = data.get("image")
-                if chart_image and chat_id in user_states:
-                    user_states[chat_id]["chart_image"] = chart_image
-                    logger.info(f"Chart image stored for chat_id {chat_id}")
-                else:
-                    logger.error(f"Failed to store chart for chat_id {chat_id}")
-            else:
-                logger.error(f"Chart service returned error: {data}")
-            
-    except Exception as e:
-        logger.exception("Error generating chart")
+        return {"status": "error", "message": f"Error sending signal: {str(e)}"}
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -530,35 +486,31 @@ async def telegram_webhook(request: Request):
             elif callback_data == "back_to_signal":
                 logger.info("Processing back to signal request")
                 try:
-                    # Get original message
+                    # Get original message from state
                     state = user_states.get(chat_id, {})
                     original_message = state.get("original_message")
+                    original_markup = state.get("original_markup")
                     
-                    if not original_message:
-                        await query.answer("Original message not found")
-                        return
-                    
-                    # Recreate original keyboard
-                    keyboard = [
-                        [
-                            InlineKeyboardButton("Market Sentiment 📊", callback_data=f"sentiment_{instrument}"),
-                            InlineKeyboardButton("Technical Analysis 📈", callback_data=f"chart_{instrument}_{timeframe}")
-                        ]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    # Send original message
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=original_message,
-                        parse_mode='Markdown',
-                        reply_markup=reply_markup
-                    )
-                    
+                    if original_message and original_markup:
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=original_message,
+                            reply_markup=original_markup,
+                            parse_mode='Markdown'
+                        )
+                    else:
+                        logger.error("Original message not found in state")
+                        await bot.answer_callback_query(
+                            callback_query_id=query.id,
+                            text="⚠️ Could not retrieve original message"
+                        )
                 except Exception as e:
-                    logger.error(f"Error returning to signal: {str(e)}")
-                    await query.answer("Error returning to signal")
+                    logger.error(f"Error handling back button: {str(e)}")
+                    await bot.answer_callback_query(
+                        callback_query_id=query.id,
+                        text="⚠️ Error returning to original message"
+                    )
             
             await query.answer()
             return {"status": "success"}
