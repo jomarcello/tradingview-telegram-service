@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+import traceback
 
 # Setup logging
 logging.basicConfig(
@@ -163,61 +164,81 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await query.answer("Message data not found")
                     return
 
+                logger.info(f"Getting news for symbol: {message_data['symbol']}")
+                
                 # First get news from signal processor
                 signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(
-                        signal_processor_url,
-                        params={"instrument": message_data["symbol"]}
-                    )
-                    
-                    if response.status_code != 200:
-                        logger.error(f"Failed to get news: {response.status_code}")
-                        await query.answer("Failed to get news")
-                        return
-                    
-                    news_data = response.json()
-                    if not news_data.get("articles"):
-                        logger.error("No news articles found")
-                        await query.answer("No news articles found")
-                        return
+                async with httpx.AsyncClient(timeout=60.0) as client:  
+                    try:
+                        response = await client.get(
+                            signal_processor_url,
+                            params={"instrument": message_data["symbol"]}
+                        )
+                        logger.info(f"Signal processor response: {response.status_code}")
+                        logger.info(f"Signal processor response body: {response.text}")
+                        
+                        if response.status_code != 200:
+                            logger.error(f"Failed to get news: {response.status_code} - {response.text}")
+                            await query.answer("Failed to get news")
+                            return
+                        
+                        news_data = response.json()
+                        logger.info(f"Got news data: {news_data}")
+                        
+                        if not news_data.get("articles"):
+                            logger.error("No news articles found")
+                            await query.answer("No news articles found")
+                            return
 
-                    # Send news to AI service for analysis
-                    sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
-                    response = await client.post(
-                        sentiment_url,
-                        json={
-                            "instrument": message_data["symbol"],
-                            "articles": news_data["articles"]
-                        }
-                    )
-                    
-                    if response.status_code != 200:
-                        logger.error(f"Failed to get sentiment: {response.status_code}")
-                        await query.answer("Failed to get sentiment")
-                        return
-                    
-                    data = response.json()
-                    if data.get("status") != "success":
-                        logger.error(f"Sentiment service error: {data}")
-                        await query.answer("Sentiment service error")
-                        return
+                        # Send news to AI service for analysis
+                        sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
+                        logger.info("Sending news to AI service")
+                        response = await client.post(
+                            sentiment_url,
+                            json={
+                                "instrument": message_data["symbol"],
+                                "articles": news_data["articles"]
+                            }
+                        )
+                        logger.info(f"AI service response: {response.status_code}")
+                        logger.info(f"AI service response body: {response.text}")
+                        
+                        if response.status_code != 200:
+                            logger.error(f"Failed to get sentiment: {response.status_code} - {response.text}")
+                            await query.answer("Failed to get sentiment")
+                            return
+                        
+                        data = response.json()
+                        logger.info(f"Got sentiment data: {data}")
+                        
+                        if data.get("status") != "success":
+                            logger.error(f"Sentiment service error: {data}")
+                            await query.answer("Sentiment service error")
+                            return
 
-                    # Create keyboard with Back button
-                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                    
-                    # Send sentiment with Back button
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=data["analysis"],
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                    
-                    await query.answer()
+                        # Create keyboard with Back button
+                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        
+                        # Send sentiment with Back button
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=data["analysis"],
+                            parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                        
+                        await query.answer()
+                        
+                    except httpx.RequestError as e:
+                        logger.error(f"HTTP Request failed: {str(e)}")
+                        await query.answer("Failed to connect to service")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse JSON: {str(e)}")
+                        await query.answer("Invalid response from service")
 
             except Exception as e:
                 logger.error(f"Error in market sentiment handler: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
                 await query.answer("An error occurred")
             
     except Exception as e:
