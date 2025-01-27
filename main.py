@@ -299,13 +299,8 @@ async def startup():
     await init_webhook()
 
 class SignalRequest(BaseModel):
-    chat_id: int
     signal_data: Dict[str, Any]
-    news_data: Optional[Dict[str, Any]] = None
-
-class SignalRequest(BaseModel):
-    chat_ids: List[int]
-    signal_data: Dict[str, Any]
+    chat_id: Optional[str] = None
     news_data: Optional[Dict[str, Any]] = None
 
 @app.post("/send-signal")
@@ -339,37 +334,35 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Store signal data in user state
-        chat_ids = signal_request.chat_ids if signal_request.chat_ids else await get_subscriber_chat_ids()
-        for chat_id in chat_ids:
-            if chat_id not in user_states:
-                user_states[chat_id] = {}
-            user_states[chat_id]["signal_data"] = {
-                "direction": signal_data["action"],
-                "entry_price": signal_data["price"],
-                "stop_loss": signal_data["stoploss"],
-                "take_profit": signal_data["takeprofit"],
-                "strategy": signal_data["strategy"],
-                "message": signal_data["formatted_message"],
-                "markup": reply_markup
-            }
+        chat_id = signal_request.chat_id if signal_request.chat_id else await get_subscriber_chat_ids()
+        if chat_id not in user_states:
+            user_states[chat_id] = {}
+        user_states[chat_id]["signal_data"] = {
+            "direction": signal_data["action"],
+            "entry_price": signal_data["price"],
+            "stop_loss": signal_data["stoploss"],
+            "take_profit": signal_data["takeprofit"],
+            "strategy": signal_data["strategy"],
+            "message": signal_data["formatted_message"],
+            "markup": reply_markup
+        }
         
         # Send message to all subscribers
-        for chat_id in chat_ids:
-            try:
-                sent_message = await bot.send_message(
-                    chat_id=chat_id,
-                    text=signal_data["formatted_message"],
-                    reply_markup=reply_markup,
-                    parse_mode='Markdown'
-                )
-                logger.info(f"Sent signal to chat_id {chat_id}")
-                
-                # Store sent message in user state
-                user_states[chat_id]["original_message"] = sent_message
-                
-            except Exception as e:
-                logger.error(f"Failed to send signal to chat_id {chat_id}: {str(e)}")
-                continue
+        try:
+            sent_message = await bot.send_message(
+                chat_id=chat_id,
+                text=signal_data["formatted_message"],
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+            logger.info(f"Sent signal to chat_id {chat_id}")
+            
+            # Store sent message in user state
+            user_states[chat_id]["original_message"] = sent_message
+            
+        except Exception as e:
+            logger.error(f"Failed to send signal to chat_id {chat_id}: {str(e)}")
+            return {"status": "error", "message": f"Failed to send signal to chat_id {chat_id}: {str(e)}"}
 
         return {"status": "success", "message": "Signal sent successfully"}
         
