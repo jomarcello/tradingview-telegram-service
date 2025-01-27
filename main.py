@@ -157,6 +157,64 @@ async def get_tradingview_widget_url(symbol: str, timeframe: str) -> str:
     logger.info(f"Generated TradingView URL: {url}")
     return url
 
+async def get_tradingview_widget_html(symbol: str, timeframe: str) -> str:
+    """Generate TradingView widget HTML"""
+    # Map common symbols to TradingView format
+    tv_symbol_map = {
+        "EURUSD": "FX:EURUSD",
+        "GBPUSD": "FX:GBPUSD",
+        "USDJPY": "FX:USDJPY",
+        "BTCUSD": "BINANCE:BTCUSDT",
+        "ETHUSD": "BINANCE:ETHUSDT",
+        "US30": "DJ:DJI",
+        "SPX500": "SP:SPX",
+        "NAS100": "NASDAQ:NDX",
+        "XAUUSD": "OANDA:XAUUSD"
+    }
+    
+    tv_timeframe_map = {
+        "1m": "1",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "1h": "60",
+        "4h": "240",
+        "1d": "D",
+        "1w": "W"
+    }
+    
+    tv_symbol = tv_symbol_map.get(symbol.upper(), symbol)
+    tv_timeframe = tv_timeframe_map.get(timeframe.lower(), "60")
+    
+    # Generate TradingView widget HTML
+    widget_html = f'''
+    <!-- TradingView Widget BEGIN -->
+    <div class="tradingview-widget-container">
+      <div id="tradingview_chart"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget(
+      {{
+        "width": "100%",
+        "height": 500,
+        "symbol": "{tv_symbol}",
+        "interval": "{tv_timeframe}",
+        "timezone": "Etc/UTC",
+        "theme": "dark",
+        "style": "1",
+        "locale": "en",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "hide_side_toolbar": false,
+        "allow_symbol_change": true,
+        "container_id": "tradingview_chart"
+      }});
+      </script>
+    </div>
+    <!-- TradingView Widget END -->
+    '''
+    return widget_html
+
 async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
     """Get chart screenshot from Chart Service"""
     try:
@@ -306,6 +364,7 @@ async def telegram_webhook(request: Request):
         if update.callback_query:
             query = update.callback_query
             chat_id = query.message.chat.id
+            message_id = query.message.message_id
             callback_data = query.data
             logger.info(f"Received callback query: {callback_data} from chat_id: {chat_id}")
             
@@ -321,40 +380,32 @@ async def telegram_webhook(request: Request):
                 logger.debug(f"User state for {chat_id}: {state}")
                 
                 try:
-                    # Get chart URL
                     instrument = state["signal_data"]["instrument"]
                     timeframe = state["signal_data"]["timeframe"]
-                    logger.info(f"Generating chart URL for {instrument} {timeframe}")
+                    logger.info(f"Updating message with chart for {instrument} {timeframe}")
                     
-                    chart_url = get_tradingview_widget_url(instrument, timeframe)
+                    # Get the original signal message
+                    signal_text = query.message.text
                     
-                    # Send chart URL with a nice message
-                    message = (
-                        f"📊 *Technical Analysis for {instrument}*\n\n"
-                        f"Timeframe: {timeframe}\n\n"
-                        f"Click here to view the live chart:\n"
-                        f"{chart_url}"
-                    )
+                    # Add chart widget
+                    widget_html = await get_tradingview_widget_html(instrument, timeframe)
                     
-                    await bot.send_message(
+                    # Update the message with both signal and chart
+                    await bot.edit_message_text(
                         chat_id=chat_id,
-                        text=message,
-                        disable_web_page_preview=False  # Enable URL preview
+                        message_id=message_id,
+                        text=f"{signal_text}\n\n📊 Technical Analysis:\n{widget_html}",
+                        parse_mode='HTML',
+                        reply_markup=query.message.reply_markup
                     )
-                    logger.info("Chart URL sent successfully")
+                    logger.info("Message updated with chart widget")
                     
                 except KeyError as e:
                     logger.exception("Missing key in signal data")
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="❌ Error: Invalid signal data format."
-                    )
+                    await query.answer("Error: Invalid signal data format.")
                 except Exception as e:
                     logger.exception("Error processing technical analysis")
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="❌ Error processing technical analysis request."
-                    )
+                    await query.answer("Error processing technical analysis request.")
             
             await query.answer()
             return {"status": "success"}
