@@ -19,6 +19,7 @@ from telegram.ext import (
 from dotenv import load_dotenv
 import base64
 import asyncio
+import time
 
 # Load environment variables
 load_dotenv()
@@ -86,6 +87,22 @@ MARKET_SETTINGS = {
     "XAGUSD": {"pip_value": 0.01, "decimals": 3},   # Silver (0.01 point)
     "WTIUSD": {"pip_value": 0.01, "decimals": 2},   # Oil (0.01 point)
 }
+
+class MessageRegistry:
+    def __init__(self):
+        self.last_signal_time = {}  # chat_id -> last signal time
+        self.cooldown = 300  # 5 minutes in seconds
+        
+    def can_send_signal(self, chat_id: str) -> bool:
+        now = time.time()
+        if chat_id in self.last_signal_time:
+            if now - self.last_signal_time[chat_id] < self.cooldown:
+                return False
+        self.last_signal_time[chat_id] = now
+        return True
+
+# Initialize registry
+message_registry = MessageRegistry()
 
 def calculate_rr_levels(instrument: str, entry_price: float, direction: str, risk_pips: float = None, risk_points: float = None) -> dict:
     """
@@ -336,6 +353,11 @@ async def send_signal(signal_request: SignalRequest) -> dict:
                 # Clean the chat_id (remove any whitespace)
                 sub_chat_id = str(subscriber["chat_id"]).strip()
                 
+                # Check cooldown
+                if not message_registry.can_send_signal(sub_chat_id):
+                    logger.info(f"Skipping signal for {sub_chat_id} due to cooldown")
+                    continue
+                
                 # Store in user state
                 user_states[sub_chat_id] = {
                     "instrument": signal_data["instrument"],
@@ -349,7 +371,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
                         chat_id=sub_chat_id,
                         text=message,
                         reply_markup=reply_markup,
-                        parse_mode=ParseMode.HTML
+                        parse_mode=ParseMode.MARKDOWN
                     )
                     logger.info(f"Sent signal to subscriber {sub_chat_id}")
                 except Exception as e:
@@ -358,6 +380,10 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         else:
             # Clean the chat_id (remove any whitespace)
             chat_id = str(chat_id).strip()
+            
+            # Check cooldown
+            if not message_registry.can_send_signal(chat_id):
+                return {"status": "error", "message": "Please wait before sending another signal"}
             
             # Store in user state
             user_states[chat_id] = {
@@ -371,7 +397,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
                 chat_id=chat_id,
                 text=message,
                 reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.MARKDOWN
             )
             logger.info(f"Sent signal to chat_id {chat_id}")
             
@@ -390,6 +416,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get user state
         chat_id = str(query.message.chat_id)
         user_state = user_states.get(chat_id, {})
+        message_id = query.message.message_id
         
         if query.data == "technical_analysis":
             if not all(k in user_state for k in ["instrument", "timeframe"]):
@@ -399,62 +426,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 return
                 
-            # Show loading message
-            loading_message = "📊 Generating technical analysis..."
-            await query.edit_message_text(
-                text=loading_message,
-                reply_markup=None
-            )
-            
             try:
                 # Get chart image
                 chart_image = await get_chart_image(user_state["instrument"], user_state["timeframe"])
                 if not chart_image:
                     raise Exception("Failed to get chart image")
                     
-                # Create back button
+                # Send new message with chart and back button
                 keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                
-                # Send new message with chart
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"📊 Technical Analysis for {user_state['instrument']} ({user_state['timeframe']})",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
                 await bot.send_photo(
                     chat_id=chat_id,
-                    photo=chart_image
-                )
-                
-                # Restore original message
-                original_message = user_state["original_message"]
-                keyboard = [
-                    [
-                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-                    ]
-                ]
-                await query.edit_message_text(
-                    text=original_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.HTML
+                    photo=chart_image,
+                    caption=f"📊 Technical Analysis for {user_state['instrument']} ({user_state['timeframe']})",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 
             except Exception as e:
                 logger.error(f"Error getting technical analysis: {str(e)}")
-                # Restore original message with error
-                original_message = user_state["original_message"]
-                keyboard = [
-                    [
-                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-                    ]
-                ]
-                await query.edit_message_text(
-                    text=original_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.HTML
-                )
                 await bot.send_message(
                     chat_id=chat_id,
                     text="Sorry, I couldn't generate the technical analysis chart. Please try again later."
@@ -468,88 +456,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 return
                 
-            # Show loading message
-            loading_message = "📰 Analyzing market sentiment..."
-            await query.edit_message_text(
-                text=loading_message,
-                reply_markup=None
-            )
-            
             try:
                 # Get news data
                 news_data = await get_news_analysis(user_state["instrument"], [])
                 if not news_data:
                     raise Exception("Failed to get market sentiment")
                     
-                # Create back button
+                # Send new message with sentiment and back button
                 keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                
-                # Send new message with sentiment
-                sentiment_message = f"""<b>📰 Market Sentiment Analysis for {user_state['instrument']}</b>
-
-{news_data}
-
-<i>Based on recent market news and events.</i>"""
-                
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=sentiment_message,
+                    text=f"📰 Market Sentiment Analysis for {user_state['instrument']}\n\n{news_data}\n\n_Based on recent market news and events._",
                     reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.HTML
-                )
-                
-                # Restore original message
-                original_message = user_state["original_message"]
-                keyboard = [
-                    [
-                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-                    ]
-                ]
-                await query.edit_message_text(
-                    text=original_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.HTML
+                    parse_mode=ParseMode.MARKDOWN
                 )
                 
             except Exception as e:
                 logger.error(f"Error getting market sentiment: {str(e)}")
-                # Restore original message with error
-                original_message = user_state["original_message"]
-                keyboard = [
-                    [
-                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-                    ]
-                ]
-                await query.edit_message_text(
-                    text=original_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.HTML
-                )
                 await bot.send_message(
                     chat_id=chat_id,
                     text="Sorry, I couldn't analyze the market sentiment. Please try again later."
                 )
                 
         elif query.data == "back_to_signal":
-            if "original_message" in user_state:
-                # Get the original message and keyboard
-                original_message = user_state["original_message"]
-                keyboard = [
-                    [
-                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-                    ]
-                ]
-                
-                # Edit message back to original
-                await query.edit_message_text(
-                    text=original_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode=ParseMode.HTML
-                )
-                return
+            # Delete the current message (analysis)
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
                 
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
