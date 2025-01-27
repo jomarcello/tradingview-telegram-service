@@ -48,8 +48,8 @@ logger.info(f"Initialized with services: SIGNAL={SIGNAL_AI_SERVICE}, NEWS={NEWS_
 # Initialize bot
 bot = Bot(token=BOT_TOKEN)
 
-# Store user states (for back button functionality)
-user_states: Dict[int, Dict[str, Any]] = {}
+# Store user states
+user_states = {}
 
 # Market specific settings
 MARKET_SETTINGS = {
@@ -301,6 +301,15 @@ async def send_signal(signal_request: SignalRequest) -> dict:
     try:
         logger.info(f"Received signal request for chat_id: {signal_request.chat_id}")
         
+        # Store signal data in user state
+        if signal_request.chat_id not in user_states:
+            user_states[signal_request.chat_id] = {}
+        
+        user_states[signal_request.chat_id].update({
+            "signal_data": signal_request.signal_data,
+            "news_data": signal_request.news_data
+        })
+        
         # Get signal data
         signal_data = signal_request.signal_data
         
@@ -350,11 +359,11 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         )
         
         # Store original message for back button
-        user_state = {
+        user_states[signal_request.chat_id].update({
             "original_message_id": message.message_id,
             "original_text": formatted_message,
             "original_markup": reply_markup
-        }
+        })
         
         return {"status": "success", "message": "Signal sent successfully"}
         
@@ -404,13 +413,9 @@ async def telegram_webhook(request: Request):
             callback_data = query.data
             logger.info(f"Received callback query - chat_id: {chat_id}, callback_data: {callback_data}")
             
-            # Store user state when sending signal
-            if not hasattr(bot, 'user_states'):
-                bot.user_states = {}
-            
-            if chat_id not in bot.user_states:
+            if chat_id not in user_states:
                 logger.info(f"Creating new state for chat_id {chat_id}")
-                bot.user_states[chat_id] = {}
+                user_states[chat_id] = {}
             
             # Handle sentiment button
             if callback_data.startswith("sentiment_"):
@@ -510,7 +515,7 @@ async def telegram_webhook(request: Request):
                 logger.info("Processing back to signal request")
                 try:
                     # Get original message
-                    state = bot.user_states.get(chat_id, {})
+                    state = user_states.get(chat_id, {})
                     original_message = state.get("original_message")
                     
                     if not original_message:
