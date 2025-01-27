@@ -332,38 +332,7 @@ async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> 
 async def format_signal(signal_data: Dict[str, Any]) -> str:
     """Format signal using the Signal AI Service"""
     try:
-        # Generate TradingView chart URL
-        instrument = signal_data.get("instrument", "").upper()
-        # Map common symbols to TradingView format
-        tv_symbol_map = {
-            "EURUSD": "FX:EURUSD",
-            "GBPUSD": "FX:GBPUSD",
-            "USDJPY": "FX:USDJPY",
-            "BTCUSD": "BINANCE:BTCUSDT",  # Using Binance as source
-            "ETHUSD": "BINANCE:ETHUSDT",
-            "US30": "DJ:DJI",
-            "SPX500": "SP:SPX",
-            "NAS100": "NASDAQ:NDX",
-            "XAUUSD": "OANDA:XAUUSD"
-        }
-        tv_symbol = tv_symbol_map.get(instrument, instrument)
-        timeframe = signal_data.get("timeframe", "1h")
-        # Map timeframes to TradingView format
-        tv_timeframe_map = {
-            "1m": "1",
-            "5m": "5",
-            "15m": "15",
-            "30m": "30",
-            "1h": "60",
-            "4h": "240",
-            "1d": "D",
-            "1w": "W"
-        }
-        tv_timeframe = tv_timeframe_map.get(timeframe, "60")
-        
-        chart_url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={tv_timeframe}"
-        
-        # Create basic signal format if Signal AI Service fails
+        # Create basic signal format
         direction_emoji = "📈" if signal_data.get("direction", "").lower() == "buy" else "📉"
         basic_signal = f"""🚨 New Trading Signal 🚨
 
@@ -382,12 +351,7 @@ Strategy: {signal_data.get("strategy", "")}
 Risk Management:
 • Position size: 1-2% max
 • Use proper stop loss
-• Follow your trading plan
-
--------------------
-
-📊 View Chart:
-{chart_url}"""
+• Follow your trading plan"""
         
         return basic_signal
             
