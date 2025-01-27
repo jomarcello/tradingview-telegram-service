@@ -303,35 +303,53 @@ class SignalRequest(BaseModel):
     signal_data: Dict[str, Any]
     news_data: Optional[Dict[str, Any]] = None
 
+class SignalRequest(BaseModel):
+    chat_ids: List[int]
+    signal_data: Dict[str, Any]
+    news_data: Optional[Dict[str, Any]] = None
+
 @app.post("/send-signal")
 async def send_signal(signal_request: SignalRequest) -> dict:
     """Send a trading signal to Telegram"""
     try:
-        # Format the message
-        message = format_signal_message(signal_request.signal_data)
-        logger.info("Formatted signal message")
-
-        # Create inline keyboard with buttons
+        # Get signal data
+        signal_data = signal_request.signal_data
+        
+        # Send signal to Signal AI Service for formatting if not already formatted
+        if "formatted_message" not in signal_data:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{SIGNAL_AI_SERVICE}/format-signal",
+                        json=signal_data
+                    )
+                    response.raise_for_status()
+                    signal_data.update(response.json())
+            except Exception as e:
+                logger.error(f"Error formatting signal: {str(e)}")
+                return {"status": "error", "message": f"Error formatting signal: {str(e)}"}
+        
+        # Create keyboard markup with sentiment and chart buttons
         keyboard = [
             [
-                InlineKeyboardButton("📊 Technical Analysis", callback_data=f"chart_{signal_request.signal_data['instrument']}_{signal_request.signal_data['timeframe']}"),
-                InlineKeyboardButton("📰 Market Sentiment", callback_data=f"sentiment_{signal_request.signal_data['instrument']}")
+                InlineKeyboardButton("📊 Technical Analysis", callback_data=f"chart_{signal_data['instrument']}_{signal_data['timeframe']}"),
+                InlineKeyboardButton("📰 Market Sentiment", callback_data=f"sentiment_{signal_data['instrument']}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Store signal data in user state
-        chat_ids = [signal_request.chat_id]
+        chat_ids = signal_request.chat_ids if signal_request.chat_ids else await get_subscriber_chat_ids()
         for chat_id in chat_ids:
             if chat_id not in user_states:
                 user_states[chat_id] = {}
             user_states[chat_id]["signal_data"] = {
-                "direction": signal_request.signal_data['action'],
-                "entry_price": signal_request.signal_data['price'],
-                "stop_loss": signal_request.signal_data['stoploss'],
-                "take_profit": signal_request.signal_data['takeprofit'],
-                "strategy": signal_request.signal_data['strategy'],
-                "message": message,
+                "direction": signal_data["action"],
+                "entry_price": signal_data["price"],
+                "stop_loss": signal_data["stoploss"],
+                "take_profit": signal_data["takeprofit"],
+                "strategy": signal_data["strategy"],
+                "message": signal_data["formatted_message"],
                 "markup": reply_markup
             }
         
@@ -340,7 +358,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
             try:
                 sent_message = await bot.send_message(
                     chat_id=chat_id,
-                    text=message,
+                    text=signal_data["formatted_message"],
                     reply_markup=reply_markup,
                     parse_mode='Markdown'
                 )
