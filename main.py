@@ -303,7 +303,7 @@ async def send_signal(signal_request: SignalRequest):
         signal_data = signal_request.signal_data
         
         # Format the signal message
-        message = await format_signal_message(signal_data)
+        message = format_signal_message(signal_data)
         
         # Create inline keyboard
         keyboard = [
@@ -314,12 +314,6 @@ async def send_signal(signal_request: SignalRequest):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Store signal data and chart image in user state
-        user_states[chat_id] = {
-            "signal_data": signal_data,
-            "chart_image": None  # Will be populated with the screenshot
-        }
-        
         # Send initial message
         message_obj = await bot.send_message(
             chat_id=chat_id,
@@ -327,6 +321,16 @@ async def send_signal(signal_request: SignalRequest):
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
+        
+        # Store signal data, chart image and original message in user state
+        user_states[chat_id] = {
+            "signal_data": signal_data,
+            "chart_image": None,
+            "original_message": {
+                "text": message,
+                "message_id": message_obj.message_id
+            }
+        }
         
         # Start generating chart image in background
         asyncio.create_task(
@@ -371,19 +375,15 @@ async def telegram_webhook(request: Request):
             chat_id = query.message.chat.id
             message_id = query.message.message_id
             callback_data = query.data
-            logger.info(f"Received callback query: {callback_data} from chat_id: {chat_id}")
             
             if chat_id not in user_states:
-                logger.warning(f"No state found for chat_id {chat_id}")
-                logger.debug(f"Current user_states: {user_states}")
                 await query.answer("Session expired. Please request a new signal.")
                 return {"status": "error", "detail": "Session expired"}
             
+            state = user_states[chat_id]
+            
             if callback_data == "technical":
                 logger.info("Processing technical analysis request")
-                state = user_states[chat_id]
-                logger.debug(f"User state for {chat_id}: {state}")
-                
                 try:
                     instrument = state["signal_data"]["instrument"]
                     timeframe = state["signal_data"]["timeframe"]
@@ -449,13 +449,12 @@ async def telegram_webhook(request: Request):
                     await query.answer("Error processing technical analysis request.")
                     
             elif callback_data == "back_to_signal":
-                logger.info("Returning to signal view")
-                state = user_states[chat_id]
-                
                 try:
-                    # Recreate original signal message
-                    signal_data = state["signal_data"]
-                    message = await format_signal_message(signal_data)
+                    # Get original message data
+                    original_message = state.get("original_message", {})
+                    if not original_message:
+                        await query.answer("Original message not found")
+                        return
                     
                     # Recreate original keyboard
                     keyboard = [
@@ -466,19 +465,18 @@ async def telegram_webhook(request: Request):
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    # Update message back to signal view
-                    await bot.edit_message_text(
+                    # Delete current message and send original
+                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                    await bot.send_message(
                         chat_id=chat_id,
-                        message_id=message_id,
-                        text=message,
+                        text=original_message["text"],
                         parse_mode='Markdown',
                         reply_markup=reply_markup
                     )
-                    logger.info("Returned to signal view")
                     
                 except Exception as e:
-                    logger.exception("Error returning to signal view")
-                    await query.answer("Error returning to signal view.")
+                    logger.exception("Error returning to signal")
+                    await query.answer("Error returning to signal")
             
             await query.answer()
             return {"status": "success"}
