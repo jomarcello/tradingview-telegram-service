@@ -155,35 +155,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.answer()
             
         elif query.data == "market_sentiment":
-            # Get symbol from stored message
-            symbol = messages[message_id]["symbol"]
-            
-            # Get market sentiment
-            sentiment_url = f"https://tradingview-chart-service-production.up.railway.app/sentiment?symbol={symbol}"
-            async with httpx.AsyncClient() as client:
-                response = await client.get(sentiment_url)
-                if response.status_code != 200:
-                    logger.error(f"Failed to get sentiment: {response.status_code}")
-                    await query.answer("Failed to get sentiment")
+            try:
+                # Get symbol from stored message
+                message_data = messages.get(message_id)
+                if not message_data:
+                    logger.error("No message data found")
+                    await query.answer("Message data not found")
                     return
-                
-                data = response.json()
-                if data.get("status") != "success":
-                    logger.error(f"Sentiment service error: {data}")
-                    await query.answer("Sentiment service error")
-                    return
-                
-                # Create keyboard with Back button
-                keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                
-                # Send sentiment with Back button
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"Market Sentiment for {symbol}: {data['sentiment']}",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                
-                await query.answer()
+
+                # Get market sentiment from news-ai-service
+                sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        sentiment_url,
+                        json={
+                            "instrument": message_data["symbol"],
+                            "articles": []  # Service will fetch articles
+                        }
+                    )
+                    
+                    if response.status_code != 200:
+                        logger.error(f"Failed to get sentiment: {response.status_code}")
+                        await query.answer("Failed to get sentiment")
+                        return
+                    
+                    data = response.json()
+                    if data.get("status") != "success":
+                        logger.error(f"Sentiment service error: {data}")
+                        await query.answer("Sentiment service error")
+                        return
+
+                    # Create keyboard with Back button
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    
+                    # Send sentiment with Back button
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=data["sentiment"],
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                    
+                    await query.answer()
+
+            except Exception as e:
+                logger.error(f"Error in market sentiment handler: {str(e)}")
+                await query.answer("An error occurred")
             
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
