@@ -14,7 +14,8 @@ from telegram.ext import (
     CallbackQueryHandler, 
     ConversationHandler, 
     MessageHandler,
-    ContextTypes
+    ContextTypes,
+    filters
 )
 from dotenv import load_dotenv
 import base64
@@ -306,18 +307,21 @@ async def calculate_risk_reward(
 async def init_webhook():
     """Initialize bot and set webhook"""
     try:
-        # Create application and register handlers
         application = Application.builder().token(BOT_TOKEN).build()
-        application.add_handler(CallbackQueryHandler(button_handler))
         
-        # Remove webhook, then set it up
-        await bot.delete_webhook()
-        await asyncio.sleep(0.1)  # Small delay
-        webhook_info = await bot.set_webhook(WEBHOOK_URL)
-        logger.info(f"Webhook setup completed: {webhook_info}")
-        return webhook_info
+        # Add handlers
+        application.add_handler(CallbackQueryHandler(handle_technical_analysis, pattern="^technical_analysis$"))
+        application.add_handler(MessageHandler(filters.COMMAND, button_handler))
+        
+        # Set webhook
+        webhook_url = f"https://tradingview-telegram-service-production.up.railway.app/webhook"
+        await application.bot.set_webhook(webhook_url)
+        logger.info(f"Webhook set to {webhook_url}")
+        
+        return application
+        
     except Exception as e:
-        logger.error(f"Error setting webhook: {str(e)}")
+        logger.error(f"Error in init_webhook: {str(e)}")
         raise
 
 @app.on_event("startup")
@@ -528,13 +532,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             pass
 
-@bot.callback_query_handler(func=lambda call: call.data == "technical_analysis")
-async def handle_technical_analysis(call):
+async def handle_technical_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle technical analysis button press"""
     try:
         # Get the symbol from the original message
-        symbol = get_symbol_from_message(call.message.text)
+        symbol = get_symbol_from_message(update.callback_query.message.text)
         if not symbol:
-            await bot.answer_callback_query(call.id, "Could not find symbol in message")
+            await update.callback_query.answer("Could not find symbol in message")
             return
 
         # Call TradingView chart service
@@ -542,32 +546,32 @@ async def handle_technical_analysis(call):
         async with httpx.AsyncClient() as client:
             response = await client.get(chart_url)
             if response.status_code != 200:
-                logger.error(f"Failed to get chart: {response.status}")
-                await bot.answer_callback_query(call.id, "Failed to get chart")
+                logger.error(f"Failed to get chart: {response.status_code}")
+                await update.callback_query.answer("Failed to get chart")
                 return
                 
             data = response.json()
             if data.get("status") != "success":
                 logger.error(f"Chart service error: {data}")
-                await bot.answer_callback_query(call.id, "Chart service error")
+                await update.callback_query.answer("Chart service error")
                 return
                 
             # Convert base64 image
             image_data = base64.b64decode(data["image"])
             
             # Send photo
-            await bot.send_photo(
-                chat_id=call.message.chat.id,
+            await context.bot.send_photo(
+                chat_id=update.callback_query.message.chat.id,
                 photo=image_data,
-                reply_to_message_id=call.message.message_id,
+                reply_to_message_id=update.callback_query.message.message_id,
                 caption=f"TradingView Chart for {symbol} (15m timeframe)"
             )
             
-            await bot.answer_callback_query(call.id)
+            await update.callback_query.answer()
             
     except Exception as e:
         logger.error(f"Error in technical analysis: {str(e)}")
-        await bot.answer_callback_query(call.id, "An error occurred")
+        await update.callback_query.answer("An error occurred")
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -641,6 +645,38 @@ def format_signal_message(signal_data: Dict[str, Any]) -> str:
     except Exception as e:
         logger.exception("Error formatting signal message")
         return "Error formatting signal message"
+
+@app.post("/test_signal")
+async def test_signal(request: Request):
+    """Send a test signal"""
+    try:
+        data = await request.json()
+        
+        # Format the signal data
+        signal_data = {
+            "symbol": data["symbol"],
+            "timeframe": data["timeframe"],
+            "direction": data["direction"],
+            "entry": data["entry"],
+            "tp": data["tp"],
+            "sl": data["sl"],
+            "timestamp": int(time.time())
+        }
+        
+        # Create signal request
+        signal_request = SignalRequest(
+            signal_data=signal_data,
+            chat_id="-1001943696825"  # Test channel ID
+        )
+        
+        # Send the signal
+        await send_signal(signal_request)
+        
+        return {"status": "success"}
+        
+    except Exception as e:
+        logger.error(f"Error sending test signal: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 async def health_check():
