@@ -502,35 +502,26 @@ async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> 
         logger.warning(f"Error getting news analysis: {str(e)}")
         return None
 
-async def format_signal_message(signal_data: Dict[str, Any]) -> str:
+def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format signal message"""
     try:
         # Create basic signal format
         direction_emoji = "📈" if signal_data.get("direction", "").lower() == "buy" else "📉"
-        basic_signal = f"""🚨 New Trading Signal 🚨
-
-Instrument: {signal_data.get("instrument", "")}
-Action: {signal_data.get("direction", "").upper()} {direction_emoji}
-
-Entry Price: {signal_data.get("entry_price", "")}
-Stop Loss: {signal_data.get("stop_loss", "")} 🛑
-Take Profit: {signal_data.get("take_profit", "")} 🎯
-
-Timeframe: {signal_data.get("timeframe", "")}
-Strategy: {signal_data.get("strategy", "")}
-
--------------------
-
-Risk Management:
-• Position size: 1-2% max
-• Use proper stop loss
-• Follow your trading plan"""
         
-        return basic_signal
-            
+        message = f"""
+*Trading Signal* {direction_emoji}
+
+*Instrument:* {signal_data.get('instrument', 'Unknown')}
+*Direction:* {signal_data.get('direction', 'Unknown').upper()}
+*Entry Price:* {signal_data.get('entry_price', 'Unknown')}
+*Stop Loss:* {signal_data.get('stop_loss', 'Unknown')}
+*Timeframe:* {signal_data.get('timeframe', 'Unknown')}
+*Strategy:* {signal_data.get('strategy', 'Unknown')}
+"""
+        return message
     except Exception as e:
-        logger.error(f"Error formatting signal: {str(e)}")
-        raise HTTPException(status_code=422, detail=f"Error formatting signal: {str(e)}")
+        logger.exception("Error formatting signal message")
+        return "Error formatting signal message"
 
 @app.get("/")
 async def health_check():
