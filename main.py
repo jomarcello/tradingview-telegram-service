@@ -310,75 +310,63 @@ class SignalRequest(BaseModel):
 async def send_signal(signal_request: SignalRequest) -> dict:
     """Send a trading signal to Telegram"""
     try:
-        # Get signal data
         signal_data = signal_request.signal_data
+        chat_id = signal_request.chat_id
         
+        # Format message if not already formatted
+        message = signal_data.get("formatted_message", "")
+        if not message:
+            message = format_signal_message(signal_data)
+            
         # Create keyboard markup with sentiment and chart buttons
         keyboard = [
             [
-                InlineKeyboardButton("📊 Technical Analysis", callback_data=f"technical_analysis"),
-                InlineKeyboardButton("📰 Market Sentiment", callback_data=f"market_sentiment")
+                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
+                InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Format message
-        message = (
-            f"🚨 *{signal_data['instrument']} {signal_data['direction'].upper()}*\n\n"
-            f"💰 Entry Price: {signal_data['entry_price']}\n"
-            f"🛑 Stop Loss: {signal_data['stop_loss']}\n"
-            f"🎯 Take Profit: {signal_data['take_profit']}\n\n"
-            f"📈 Strategy: {signal_data['strategy']}\n"
-            f"⏰ Timeframe: {signal_data['timeframe']}"
-        )
-        
-        # Get chat IDs from Supabase if chat_id is "all"
-        chat_ids = []
-        if signal_request.chat_id == "all":
+        # Send to all subscribers or specific chat_id
+        if chat_id == "all":
             subscribers = await get_subscribers()
-            chat_ids = [sub["chat_id"] for sub in subscribers]
-        else:
-            chat_ids = [signal_request.chat_id]
-        
-        # Store signal data in user state
-        for chat_id in chat_ids:
-            if chat_id not in user_states:
-                user_states[chat_id] = {}
-            user_states[chat_id]["signal_data"] = {
-                "instrument": signal_data["instrument"],
-                "direction": signal_data["direction"],
-                "entry_price": signal_data["entry_price"],
-                "stop_loss": signal_data["stop_loss"],
-                "take_profit": signal_data["take_profit"],
-                "strategy": signal_data["strategy"],
-                "timeframe": signal_data["timeframe"],
-                "message": message,
-                "markup": reply_markup
-            }
-        
-        # Send message to all subscribers
-        for chat_id in chat_ids:
-            try:
-                sent_message = await bot.send_message(
-                    chat_id=chat_id,
+            for subscriber in subscribers:
+                sub_chat_id = str(subscriber["chat_id"])
+                # Store in user state
+                user_states[sub_chat_id] = {
+                    "instrument": signal_data["instrument"],
+                    "timeframe": signal_data["timeframe"],
+                    "original_message": message
+                }
+                # Send message
+                await bot.send_message(
+                    chat_id=sub_chat_id,
                     text=message,
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.HTML
                 )
-                logger.info(f"Sent signal to chat_id {chat_id}")
-                
-                # Store sent message in user state
-                user_states[chat_id]["original_message"] = sent_message
-                
-            except Exception as e:
-                logger.error(f"Failed to send signal to chat_id {chat_id}: {str(e)}")
-                continue
-
+                logger.info(f"Sent signal to subscriber {sub_chat_id}")
+        else:
+            # Store in user state
+            user_states[chat_id] = {
+                "instrument": signal_data["instrument"],
+                "timeframe": signal_data["timeframe"],
+                "original_message": message
+            }
+            # Send message
+            await bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+            logger.info(f"Sent signal to chat_id {chat_id}")
+            
         return {"status": "success", "message": "Signal sent successfully"}
         
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error sending signal: {str(e)}")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses"""
