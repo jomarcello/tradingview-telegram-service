@@ -474,21 +474,16 @@ async def telegram_webhook(request: Request):
                             else:
                                 image_bytes = image_data
                             
-                            # Get technical analysis from Signal AI Service
-                            analysis_response = await client.post(
-                                f"{SIGNAL_AI_SERVICE}/analyze-technical",
-                                json={
-                                    "instrument": instrument,
-                                    "timeframe": timeframe,
-                                    "direction": user_states[chat_id]["signal_data"]["direction"],
-                                    "entry_price": user_states[chat_id]["signal_data"]["entry_price"],
-                                    "stop_loss": user_states[chat_id]["signal_data"]["stop_loss"],
-                                    "take_profit": user_states[chat_id]["signal_data"]["take_profit"],
-                                    "strategy": user_states[chat_id]["signal_data"]["strategy"]
-                                }
-                            )
-                            analysis_response.raise_for_status()
-                            analysis_data = analysis_response.json()
+                            # Get technical analysis from chart data
+                            analysis_text = chart_data.get("analysis", "")
+                            if not analysis_text:
+                                # Use signal data if no analysis is provided
+                                analysis_text = f"Technical analysis for {instrument} {timeframe}:\n\n"
+                                analysis_text += f"• Direction: {user_states[chat_id]['signal_data']['direction'].upper()}\n"
+                                analysis_text += f"• Entry Price: {user_states[chat_id]['signal_data']['entry_price']}\n"
+                                analysis_text += f"• Stop Loss: {user_states[chat_id]['signal_data']['stop_loss']}\n"
+                                analysis_text += f"• Take Profit: {user_states[chat_id]['signal_data']['take_profit']}\n"
+                                analysis_text += f"• Strategy: {user_states[chat_id]['signal_data']['strategy']}"
                             
                             # Create message with chart and analysis
                             await bot.edit_message_media(
@@ -496,7 +491,7 @@ async def telegram_webhook(request: Request):
                                 message_id=message_id,
                                 media=InputMediaPhoto(
                                     media=image_bytes,
-                                    caption=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{analysis_data['analysis']}",
+                                    caption=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{analysis_text}",
                                     parse_mode='Markdown'
                                 ),
                                 reply_markup=reply_markup
