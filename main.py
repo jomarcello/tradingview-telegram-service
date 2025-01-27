@@ -43,7 +43,7 @@ if not BOT_TOKEN:
 # Service URLs
 SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
-CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service-production.up.railway.app")
+CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service.up.railway.app")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://tradingview-telegram-service-production.up.railway.app/webhook")
 
 # Initialize bot
@@ -128,11 +128,13 @@ def calculate_rr_levels(instrument: str, entry_price: float, direction: str, ris
 async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
     """Get chart screenshot from Chart Service"""
     try:
+        logger.info(f"Getting chart for {instrument} {timeframe} from {CHART_SERVICE}")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{CHART_SERVICE}/capture-chart",
                 json={"symbol": instrument, "timeframe": timeframe}
             )
+            logger.info(f"Chart service response: {response.status_code} {response.text}")
             if response.status_code == 200:
                 result = response.json()
                 return result["image"]  # Base64 encoded image
@@ -238,23 +240,30 @@ async def telegram_webhook(request: Request):
     """Handle Telegram webhook updates"""
     try:
         data = await request.json()
+        logger.info(f"Received webhook data: {data}")
         update = Update.de_json(data, bot)
         
         if update.callback_query:
             query = update.callback_query
             chat_id = query.message.chat.id
+            logger.info(f"Processing callback query for chat_id {chat_id}")
             
             if chat_id not in user_states:
+                logger.warning(f"Chat ID {chat_id} not found in user_states")
                 await query.answer("Session expired. Please request a new signal.")
                 return
             
             if query.data == "technical":
+                logger.info("Processing technical analysis request")
                 # Get chart screenshot
                 instrument = user_states[chat_id]["signal_data"]["instrument"]
                 timeframe = user_states[chat_id]["signal_data"]["timeframe"]
+                logger.info(f"Getting chart for {instrument} {timeframe}")
+                
                 chart_image = await get_chart_image(instrument, timeframe)
                 
                 if chart_image:
+                    logger.info("Chart image received, sending to Telegram")
                     # Convert base64 to bytes
                     image_bytes = base64.b64decode(chart_image)
                     
@@ -264,7 +273,9 @@ async def telegram_webhook(request: Request):
                         photo=image_bytes,
                         caption=f"📈 Technical Analysis for {instrument} ({timeframe})"
                     )
+                    logger.info("Chart image sent successfully")
                 else:
+                    logger.error("Failed to get chart image")
                     await bot.send_message(
                         chat_id=chat_id,
                         text="❌ Sorry, could not generate chart at this time."
