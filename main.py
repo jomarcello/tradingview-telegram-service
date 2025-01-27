@@ -104,58 +104,89 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message_id = str(query.message.message_id)
 
         if query.data == "technical_analysis":
-            # Get symbol from stored message
-            symbol = messages[message_id]["symbol"]
-            
-            # Get chart screenshot
-            chart_url = f"https://tradingview-chart-service-production.up.railway.app/screenshot?symbol={symbol}&interval=15m"
-            async with httpx.AsyncClient() as client:
-                response = await client.get(chart_url)
-                if response.status_code != 200:
-                    logger.error(f"Failed to get chart: {response.status_code}")
-                    await query.answer("Failed to get chart")
+            try:
+                # Immediately acknowledge the button press
+                await query.answer()
+                
+                # Get symbol from stored message
+                message_data = messages.get(message_id)
+                if not message_data:
+                    logger.error("No message data found")
+                    await query.edit_message_text("Message data not found")
                     return
+
+                logger.info(f"Getting chart for symbol: {message_data['symbol']}")
                 
-                data = response.json()
-                if data.get("status") != "success":
-                    logger.error(f"Chart service error: {data}")
-                    await query.answer("Chart service error")
-                    return
-                
-                # Convert base64 image
-                image_data = base64.b64decode(data["image"])
-                
-                # Create keyboard with Back button
-                keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                
-                # Send photo with Back button
-                await bot.send_photo(
-                    chat_id=chat_id,
-                    photo=image_data,
-                    caption=f"Technical Analysis for {symbol} (15m)",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
+                # Update the current message to show loading
+                await query.edit_message_text(
+                    text="🔄 Generating technical analysis chart...",
+                    parse_mode='Markdown'
                 )
                 
-                await query.answer()
+                # Get chart from chart service
+                chart_service_url = "https://tradingview-chart-service-production.up.railway.app/get-chart"
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    try:
+                        response = await client.get(
+                            chart_service_url,
+                            params={"symbol": message_data["symbol"]}
+                        )
+                        
+                        if response.status_code != 200:
+                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            await query.edit_message_text(
+                                text="❌ Failed to get chart",
+                                parse_mode='Markdown',
+                                reply_markup=InlineKeyboardMarkup(keyboard)
+                            )
+                            return
+                        
+                        chart_data = response.json()
+                        if not chart_data.get("image_url"):
+                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            await query.edit_message_text(
+                                text="❌ No chart available",
+                                parse_mode='Markdown',
+                                reply_markup=InlineKeyboardMarkup(keyboard)
+                            )
+                            return
 
-        elif query.data == "back_to_signal":
-            # Get original message
-            message_data = messages[message_id]
-            
-            # Restore original message with Technical Analysis button
-            keyboard = [[
-                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-            ]]
-            
-            await query.message.edit_text(
-                text=message_data["original_text"],
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            await query.answer()
-            
+                        # Create keyboard with Back button
+                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        
+                        # Send the chart image
+                        await context.bot.send_photo(
+                            chat_id=query.message.chat_id,
+                            photo=chart_data["image_url"],
+                            caption=f"📊 Technical Analysis for {message_data['symbol']}",
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                        
+                        # Delete the loading message
+                        await query.message.delete()
+                        
+                    except Exception as e:
+                        logger.error(f"Error getting chart: {str(e)}")
+                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        await query.edit_message_text(
+                            text="❌ An error occurred",
+                            parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+
+            except Exception as e:
+                logger.error(f"Error in technical analysis handler: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                try:
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    await query.edit_message_text(
+                        text="❌ An error occurred",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                except:
+                    pass
+
         elif query.data == "market_sentiment":
             try:
                 # Immediately acknowledge the button press
