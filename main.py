@@ -218,33 +218,18 @@ async def get_tradingview_widget_html(symbol: str, timeframe: str) -> str:
 async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
     """Get chart screenshot from Chart Service"""
     try:
-        logger.debug(f"Starting chart request for {instrument} {timeframe}")
-        logger.debug(f"Chart service URL: {CHART_SERVICE}")
-        
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            url = f"{CHART_SERVICE}/capture-chart"
-            data = {"symbol": instrument, "timeframe": timeframe}
-            logger.debug(f"Making request to {url} with data: {data}")
-            
-            try:
-                response = await client.post(url, json=data)
-                logger.debug(f"Raw response: {response.text}")
-                logger.info(f"Chart service response: {response.status_code}")
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    image_size = len(result.get("image", ""))
-                    logger.info(f"Received image of size: {image_size} bytes")
-                    return result.get("image")
-                else:
-                    logger.error(f"Chart Service error: {response.status_code} - {response.text}")
-                    return None
-            except Exception as e:
-                logger.exception("Error during chart service request")
-                return None
-                
+        logger.info(f"Requesting chart for {instrument} {timeframe}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{CHART_SERVICE}/capture-chart",
+                json={"symbol": instrument, "timeframe": timeframe},
+                timeout=30.0
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("image")
     except Exception as e:
-        logger.exception("Error in get_chart_image")
+        logger.exception(f"Error getting chart image: {str(e)}")
         return None
 
 @app.post("/calculate-rr")
@@ -380,30 +365,58 @@ async def telegram_webhook(request: Request):
                 logger.debug(f"User state for {chat_id}: {state}")
                 
                 try:
+                    # Get chart screenshot
                     instrument = state["signal_data"]["instrument"]
                     timeframe = state["signal_data"]["timeframe"]
+                    logger.info(f"Requesting chart for {instrument} {timeframe}")
                     
-                    # Create inline keyboard with chart options and back button
-                    keyboard = [
-                        [
-                            InlineKeyboardButton("View Chart 📈", url=await get_tradingview_url(instrument, timeframe)),
-                            InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")
-                        ]
-                    ]
+                    # Create keyboard with back button
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    # Update message with technical analysis view
+                    # First update the message to show loading
                     await bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=message_id,
-                        text=f"📊 *Technical Analysis for {instrument}*\n\n"
-                             f"Timeframe: {timeframe}\n\n"
-                             f"Click 'View Chart' to open the TradingView chart in a new window.",
-                        parse_mode='Markdown',
+                        text=f"📊 Loading chart for {instrument} ({timeframe})...",
                         reply_markup=reply_markup
                     )
-                    logger.info("Message updated with technical analysis view")
                     
+                    chart_image = await get_chart_image(instrument, timeframe)
+                    
+                    if chart_image:
+                        logger.info("Chart image received, sending to Telegram")
+                        try:
+                            # Convert base64 to bytes
+                            image_bytes = base64.b64decode(chart_image)
+                            logger.debug(f"Decoded image size: {len(image_bytes)} bytes")
+                            
+                            # Send new message with chart
+                            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                            await bot.send_photo(
+                                chat_id=chat_id,
+                                photo=image_bytes,
+                                caption=f"📈 Technical Analysis for {instrument} ({timeframe})",
+                                reply_markup=reply_markup
+                            )
+                            logger.info("Chart image sent successfully")
+                        except Exception as e:
+                            logger.exception("Error sending chart image")
+                            await bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text="❌ Error sending chart image.",
+                                reply_markup=reply_markup
+                            )
+                    else:
+                        logger.error("No chart image received")
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text="❌ Sorry, could not generate chart at this time.",
+                            reply_markup=reply_markup
+                        )
+                        
                 except KeyError as e:
                     logger.exception("Missing key in signal data")
                     await query.answer("Error: Invalid signal data format.")
