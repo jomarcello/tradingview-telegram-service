@@ -123,6 +123,40 @@ def calculate_rr_levels(instrument: str, entry_price: float, direction: str, ris
         logger.error(f"Error calculating RR levels: {str(e)}")
         return None
 
+async def get_tradingview_widget_url(symbol: str, timeframe: str) -> str:
+    """Generate TradingView widget URL with proper symbol mapping"""
+    # Map common symbols to TradingView format
+    tv_symbol_map = {
+        "EURUSD": "FX:EURUSD",
+        "GBPUSD": "FX:GBPUSD",
+        "USDJPY": "FX:USDJPY",
+        "BTCUSD": "BINANCE:BTCUSDT",
+        "ETHUSD": "BINANCE:ETHUSDT",
+        "US30": "DJ:DJI",
+        "SPX500": "SP:SPX",
+        "NAS100": "NASDAQ:NDX",
+        "XAUUSD": "OANDA:XAUUSD"
+    }
+    
+    tv_timeframe_map = {
+        "1m": "1",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "1h": "60",
+        "4h": "240",
+        "1d": "D",
+        "1w": "W"
+    }
+    
+    tv_symbol = tv_symbol_map.get(symbol.upper(), symbol)
+    tv_timeframe = tv_timeframe_map.get(timeframe.lower(), "60")
+    
+    # Generate TradingView widget URL
+    url = f"https://www.tradingview.com/widgetembed/?symbol={tv_symbol}&interval={tv_timeframe}&hidesidetoolbar=1&symboledit=0"
+    logger.info(f"Generated TradingView widget URL: {url}")
+    return url
+
 async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
     """Get chart screenshot from Chart Service"""
     try:
@@ -287,39 +321,21 @@ async def telegram_webhook(request: Request):
                 logger.debug(f"User state for {chat_id}: {state}")
                 
                 try:
-                    # Get chart screenshot
+                    # Get chart URL
                     instrument = state["signal_data"]["instrument"]
                     timeframe = state["signal_data"]["timeframe"]
-                    logger.info(f"Requesting chart for {instrument} {timeframe}")
+                    logger.info(f"Generating chart URL for {instrument} {timeframe}")
                     
-                    chart_image = await get_chart_image(instrument, timeframe)
+                    chart_url = await get_tradingview_widget_url(instrument, timeframe)
                     
-                    if chart_image:
-                        logger.info("Chart image received, sending to Telegram")
-                        try:
-                            # Convert base64 to bytes
-                            image_bytes = base64.b64decode(chart_image)
-                            logger.debug(f"Decoded image size: {len(image_bytes)} bytes")
-                            
-                            # Send chart image
-                            await bot.send_photo(
-                                chat_id=chat_id,
-                                photo=image_bytes,
-                                caption=f"📈 Technical Analysis for {instrument} ({timeframe})"
-                            )
-                            logger.info("Chart image sent successfully")
-                        except Exception as e:
-                            logger.exception("Error sending chart image")
-                            await bot.send_message(
-                                chat_id=chat_id,
-                                text="❌ Error sending chart image."
-                            )
-                    else:
-                        logger.error("No chart image received")
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text="❌ Sorry, could not generate chart at this time."
-                        )
+                    # Send chart URL with a nice message
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"📊 *Technical Analysis for {instrument}*\n\nTimeframe: {timeframe}\n\n[View Live Chart]({chart_url})",
+                        parse_mode='Markdown'
+                    )
+                    logger.info("Chart URL sent successfully")
+                    
                 except KeyError as e:
                     logger.exception("Missing key in signal data")
                     await bot.send_message(
