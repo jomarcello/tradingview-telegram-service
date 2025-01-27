@@ -409,11 +409,10 @@ async def telegram_webhook(request: Request):
             
             state = user_states[chat_id]
             
-            if callback_data == "technical":
+            if callback_data.startswith("chart_"):
                 logger.info("Processing technical analysis request")
                 try:
-                    instrument = state["signal_data"]["instrument"]
-                    timeframe = state["signal_data"]["timeframe"]
+                    instrument, timeframe = callback_data.split("_")[1:]
                     
                     # Create keyboard with back button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
@@ -486,8 +485,8 @@ async def telegram_webhook(request: Request):
                     # Recreate original keyboard
                     keyboard = [
                         [
-                            InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
-                            InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+                            InlineKeyboardButton("Market Sentiment 📊", callback_data=f"sentiment_{state['signal_data']['instrument']}"),
+                            InlineKeyboardButton("Technical Analysis 📈", callback_data=f"chart_{state['signal_data']['instrument']}_{state['signal_data']['timeframe']}")
                         ]
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
