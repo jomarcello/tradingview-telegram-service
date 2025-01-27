@@ -5,7 +5,7 @@ import httpx
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler
 from dotenv import load_dotenv
 import base64
@@ -474,24 +474,23 @@ async def telegram_webhook(request: Request):
                             else:
                                 image_bytes = image_data
                             
-                            # Update message with analysis
-                            await bot.edit_message_text(
+                            # Create analysis text
+                            analysis_text = chart_data.get('analysis', 'No analysis available.')
+                            caption = f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{analysis_text}"
+                            
+                            # Send chart with analysis as caption
+                            await bot.edit_message_media(
                                 chat_id=chat_id,
                                 message_id=message_id,
-                                text=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{chart_data.get('analysis', 'No analysis available.')}",
-                                reply_markup=reply_markup,
-                                parse_mode='Markdown'
+                                media=InputMediaPhoto(
+                                    media=image_bytes,
+                                    caption=caption,
+                                    parse_mode='Markdown'
+                                ),
+                                reply_markup=reply_markup
                             )
                             
-                            # Send chart as photo using bytes
-                            await bot.send_photo(
-                                chat_id=chat_id,
-                                photo=image_bytes,
-                                caption=f"TradingView Chart - {instrument} {timeframe}",
-                                filename=f"{instrument}_{timeframe}_chart.png"
-                            )
-                            
-                            logger.info("Successfully sent chart image")
+                            logger.info("Successfully sent chart image with analysis")
                         else:
                             error_msg = chart_data.get("error", "Unknown error occurred")
                             logger.error(f"Chart service error: {error_msg}")
