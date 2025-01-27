@@ -458,8 +458,23 @@ async def telegram_webhook(request: Request):
                         response.raise_for_status()
                         chart_data = response.json()
                         
-                        if chart_data.get("status") == "success" and chart_data.get("image_url"):
-                            # Send chart image
+                        if chart_data.get("status") == "success":
+                            # Get image data
+                            image_data = chart_data.get("image")
+                            if not image_data:
+                                raise Exception("No image data received from chart service")
+                            
+                            # Convert base64 to bytes if needed
+                            if isinstance(image_data, str):
+                                import base64
+                                try:
+                                    image_bytes = base64.b64decode(image_data)
+                                except Exception as e:
+                                    raise Exception(f"Failed to decode image data: {str(e)}")
+                            else:
+                                image_bytes = image_data
+                            
+                            # Update message with analysis
                             await bot.edit_message_text(
                                 chat_id=chat_id,
                                 message_id=message_id,
@@ -468,12 +483,15 @@ async def telegram_webhook(request: Request):
                                 parse_mode='Markdown'
                             )
                             
-                            # Send chart as photo using URL
+                            # Send chart as photo using bytes
                             await bot.send_photo(
                                 chat_id=chat_id,
-                                photo=chart_data["image_url"],
-                                caption=f"TradingView Chart - {instrument} {timeframe}"
+                                photo=image_bytes,
+                                caption=f"TradingView Chart - {instrument} {timeframe}",
+                                filename=f"{instrument}_{timeframe}_chart.png"
                             )
+                            
+                            logger.info("Successfully sent chart image")
                         else:
                             error_msg = chart_data.get("error", "Unknown error occurred")
                             logger.error(f"Chart service error: {error_msg}")
