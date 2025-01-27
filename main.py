@@ -192,58 +192,74 @@ async def calculate_risk_reward(
         logger.error(f"Error in calculate_risk_reward endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.on_event("startup")
-async def startup_event():
-    """Set webhook on startup"""
+# Initialize bot and set webhook
+async def init_webhook():
+    """Initialize bot and set webhook"""
     try:
-        webhook_url = "https://tradingview-telegram-service-production.up.railway.app/webhook"
-        logger.info(f"Setting webhook to: {webhook_url}")
         webhook_info = await bot.get_webhook_info()
-        current_url = webhook_info.url if webhook_info else None
-        logger.info(f"Current webhook URL: {current_url}")
+        logger.info(f"Current webhook info: {webhook_info.url}")
         
-        if current_url != webhook_url:
-            logger.info("Deleting old webhook...")
-            await bot.delete_webhook()
-            logger.info("Setting new webhook...")
-            success = await bot.set_webhook(url=webhook_url)
-            if success:
-                logger.info("Webhook set successfully")
-            else:
-                logger.error("Failed to set webhook")
-        else:
-            logger.info("Webhook already set correctly")
-            
-        # Verify webhook is set
-        webhook_info = await bot.get_webhook_info()
-        logger.info(f"Final webhook URL: {webhook_info.url}")
-        logger.info(f"Webhook info: {webhook_info.to_dict()}")
+        if webhook_info.url != WEBHOOK_URL:
+            logger.info(f"Setting webhook to: {WEBHOOK_URL}")
+            await bot.set_webhook(url=WEBHOOK_URL)
+            logger.info("Webhook set successfully")
     except Exception as e:
-        logger.error(f"Error setting webhook: {str(e)}")
-        logger.exception("Full traceback:")
+        logger.error(f"Failed to set webhook: {str(e)}")
         raise
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Remove webhook on shutdown"""
-    try:
-        logger.info("Removing webhook")
-        await bot.delete_webhook()
-        logger.info("Webhook removed successfully")
-    except Exception as e:
-        logger.error(f"Error removing webhook: {e}")
+@app.on_event("startup")
+async def startup():
+    """Run startup tasks"""
+    await init_webhook()
 
-# Command handlers
-async def start_command(update: Update, context: CallbackContext) -> None:
-    """Send a message when the command /start is issued."""
-    user = update.effective_user
-    welcome_message = (
-        f"Welcome {user.first_name}! 🚀\n\n"
-        "I'm your SigmaPips trading assistant. I'll send you real-time trading signals "
-        "with detailed market analysis and news updates.\n\n"
-        "Stay tuned for the next trading opportunity! 📈"
-    )
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+class SignalRequest(BaseModel):
+    chat_id: int
+    signal_data: Dict[str, Any]
+    news_data: Optional[Dict[str, Any]] = None
+
+@app.post("/send-signal")
+async def send_signal(signal_request: SignalRequest):
+    """Send a signal to a Telegram chat"""
+    try:
+        chat_id = signal_request.chat_id
+        signal_data = signal_request.signal_data
+        news_data = signal_request.news_data
+        
+        logger.info(f"Received signal request for chat_id {chat_id}")
+        logger.debug(f"Signal data: {signal_data}")
+        
+        # Store signal data for later use
+        user_states[chat_id] = {
+            "signal_data": signal_data,
+            "news_data": news_data
+        }
+        logger.debug(f"Updated user_states for {chat_id}: {user_states[chat_id]}")
+        
+        # Format and send signal
+        signal_text = await format_signal(signal_data)
+        
+        # Create inline keyboard
+        keyboard = [
+            [
+                InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
+                InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Send message with inline keyboard
+        await bot.send_message(
+            chat_id=chat_id,
+            text=signal_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        
+        return {"status": "success", "message": "Signal sent successfully"}
+        
+    except Exception as e:
+        logger.exception("Error sending signal")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -263,75 +279,66 @@ async def telegram_webhook(request: Request):
                 logger.warning(f"No state found for chat_id {chat_id}")
                 logger.debug(f"Current user_states: {user_states}")
                 await query.answer("Session expired. Please request a new signal.")
-                return
+                return {"status": "error", "detail": "Session expired"}
             
             if callback_data == "technical":
                 logger.info("Processing technical analysis request")
                 state = user_states[chat_id]
                 logger.debug(f"User state for {chat_id}: {state}")
                 
-                # Get chart screenshot
-                instrument = state["signal_data"]["instrument"]
-                timeframe = state["signal_data"]["timeframe"]
-                logger.info(f"Requesting chart for {instrument} {timeframe}")
-                
-                chart_image = await get_chart_image(instrument, timeframe)
-                
-                if chart_image:
-                    logger.info("Chart image received, sending to Telegram")
-                    try:
-                        # Convert base64 to bytes
-                        image_bytes = base64.b64decode(chart_image)
-                        logger.debug(f"Decoded image size: {len(image_bytes)} bytes")
-                        
-                        # Send chart image
-                        await bot.send_photo(
-                            chat_id=chat_id,
-                            photo=image_bytes,
-                            caption=f"📈 Technical Analysis for {instrument} ({timeframe})"
-                        )
-                        logger.info("Chart image sent successfully")
-                    except Exception as e:
-                        logger.exception("Error sending chart image")
+                try:
+                    # Get chart screenshot
+                    instrument = state["signal_data"]["instrument"]
+                    timeframe = state["signal_data"]["timeframe"]
+                    logger.info(f"Requesting chart for {instrument} {timeframe}")
+                    
+                    chart_image = await get_chart_image(instrument, timeframe)
+                    
+                    if chart_image:
+                        logger.info("Chart image received, sending to Telegram")
+                        try:
+                            # Convert base64 to bytes
+                            image_bytes = base64.b64decode(chart_image)
+                            logger.debug(f"Decoded image size: {len(image_bytes)} bytes")
+                            
+                            # Send chart image
+                            await bot.send_photo(
+                                chat_id=chat_id,
+                                photo=image_bytes,
+                                caption=f"📈 Technical Analysis for {instrument} ({timeframe})"
+                            )
+                            logger.info("Chart image sent successfully")
+                        except Exception as e:
+                            logger.exception("Error sending chart image")
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text="❌ Error sending chart image."
+                            )
+                    else:
+                        logger.error("No chart image received")
                         await bot.send_message(
                             chat_id=chat_id,
-                            text="❌ Error sending chart image."
+                            text="❌ Sorry, could not generate chart at this time."
                         )
-                else:
-                    logger.error("No chart image received")
+                except KeyError as e:
+                    logger.exception("Missing key in signal data")
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="❌ Sorry, could not generate chart at this time."
+                        text="❌ Error: Invalid signal data format."
+                    )
+                except Exception as e:
+                    logger.exception("Error processing technical analysis")
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="❌ Error processing technical analysis request."
                     )
             
             await query.answer()
+            return {"status": "success"}
             
-        return {"status": "success"}
-        
     except Exception as e:
-        logger.error(f"Error handling webhook: {str(e)}")
+        logger.exception("Error handling webhook")
         return {"status": "error", "detail": str(e)}
-
-class SignalData(BaseModel):
-    instrument: str
-    direction: str
-    entry_price: float
-    timeframe: str
-    stop_loss: float
-    take_profit: Optional[float] = None
-    strategy: str
-
-class NewsArticle(BaseModel):
-    title: str
-    content: str
-
-class NewsData(BaseModel):
-    articles: List[NewsArticle]
-
-class SignalMessage(BaseModel):
-    chat_id: int
-    signal_data: SignalData
-    news_data: Optional[NewsData] = None
 
 async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> Dict[str, Any]:
     """Get news analysis from News AI Service"""
@@ -379,85 +386,6 @@ Risk Management:
     except Exception as e:
         logger.error(f"Error formatting signal: {str(e)}")
         raise HTTPException(status_code=422, detail=f"Error formatting signal: {str(e)}")
-
-@app.post("/send-signal")
-async def send_signal(message: SignalMessage):
-    """Send a signal message to a specific chat with interactive options"""
-    try:
-        logger.info(f"Received signal request for chat_id: {message.chat_id}")
-        
-        # Calculate proper RR levels
-        entry_price = message.signal_data.entry_price
-        stop_loss = message.signal_data.stop_loss
-        instrument = message.signal_data.instrument
-        direction = message.signal_data.direction
-        
-        if all([entry_price, stop_loss, instrument, direction]):
-            # Calculate risk in points
-            settings = MARKET_SETTINGS.get(instrument.upper(), {"pip_value": 0.0001, "decimals": 4})
-            risk_points = abs(entry_price - stop_loss)
-            
-            # Recalculate levels to ensure 1:1 RR
-            levels = calculate_rr_levels(
-                instrument=instrument,
-                entry_price=entry_price,
-                direction=direction,
-                risk_points=risk_points
-            )
-            
-            if levels:
-                message.signal_data.stop_loss = levels["stop_loss"]
-                message.signal_data.take_profit = levels["take_profit"]
-                logger.info(f"Adjusted levels for 1:1 RR: {levels}")
-        
-        # Format signal
-        logger.info("Formatting signal...")
-        signal_text = await format_signal(message.signal_data.dict())
-        logger.info(f"Signal formatted successfully: {signal_text}")
-        
-        # Get news analysis if available
-        news_analysis = None
-        if message.news_data and message.news_data.articles:
-            try:
-                articles = [{"title": article.title, "content": article.content} 
-                          for article in message.news_data.articles]
-                news_analysis = await get_news_analysis(message.signal_data.instrument, articles)
-            except Exception as e:
-                logger.error(f"Error getting news analysis: {str(e)}")
-        
-        # Store in user state
-        user_states[message.chat_id] = {
-            "signal_text": signal_text,
-            "signal_data": message.signal_data.dict(),
-            "news_data": {
-                "analysis": f"📊 *Market Sentiment Analysis*\n\n"
-                           f"Based on recent news and market data for {message.signal_data.instrument}:\n\n"
-                           f"{news_analysis['analysis'] if news_analysis else 'No market sentiment analysis available at this time.'}"
-            } if news_analysis else None
-        }
-        
-        # Send initial message with buttons
-        keyboard = [
-            [
-                InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
-                InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await bot.send_message(
-            chat_id=message.chat_id,
-            text=signal_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        logger.info("Message sent successfully")
-        
-        return {"status": "success", "message": "Signal sent successfully"}
-        
-    except Exception as e:
-        logger.error(f"Failed to send signal: {str(e)}")
-        raise HTTPException(status_code=422, detail=f"Failed to send signal: {str(e)}")
 
 @app.get("/")
 async def health_check():
