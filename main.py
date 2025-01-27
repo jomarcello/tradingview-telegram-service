@@ -152,9 +152,9 @@ async def get_tradingview_widget_url(symbol: str, timeframe: str) -> str:
     tv_symbol = tv_symbol_map.get(symbol.upper(), symbol)
     tv_timeframe = tv_timeframe_map.get(timeframe.lower(), "60")
     
-    # Generate TradingView widget URL
-    url = f"https://www.tradingview.com/widgetembed/?symbol={tv_symbol}&interval={tv_timeframe}&hidesidetoolbar=1&symboledit=0"
-    logger.info(f"Generated TradingView widget URL: {url}")
+    # Generate TradingView chart URL that works well with Telegram
+    url = f"https://www.tradingview.com/chart/?symbol={tv_symbol}&interval={tv_timeframe}"
+    logger.info(f"Generated TradingView URL: {url}")
     return url
 
 async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
@@ -326,13 +326,20 @@ async def telegram_webhook(request: Request):
                     timeframe = state["signal_data"]["timeframe"]
                     logger.info(f"Generating chart URL for {instrument} {timeframe}")
                     
-                    chart_url = await get_tradingview_widget_url(instrument, timeframe)
+                    chart_url = get_tradingview_widget_url(instrument, timeframe)
                     
                     # Send chart URL with a nice message
+                    message = (
+                        f"📊 *Technical Analysis for {instrument}*\n\n"
+                        f"Timeframe: {timeframe}\n\n"
+                        f"Click here to view the live chart:\n"
+                        f"{chart_url}"
+                    )
+                    
                     await bot.send_message(
                         chat_id=chat_id,
-                        text=f"📊 *Technical Analysis for {instrument}*\n\nTimeframe: {timeframe}\n\n[View Live Chart]({chart_url})",
-                        parse_mode='Markdown'
+                        text=message,
+                        disable_web_page_preview=False  # Enable URL preview
                     )
                     logger.info("Chart URL sent successfully")
                     
