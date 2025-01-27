@@ -5,7 +5,8 @@ import httpx
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, ParseMode
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.constants import ParseMode
 from telegram.ext import (
     CallbackContext, 
     Application, 
@@ -362,7 +363,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
                     chat_id=chat_id,
                     text=message,
                     reply_markup=reply_markup,
-                    parse_mode='Markdown'
+                    parse_mode=ParseMode.HTML
                 )
                 logger.info(f"Sent signal to chat_id {chat_id}")
                 
