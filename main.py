@@ -449,29 +449,35 @@ async def telegram_webhook(request: Request):
                     async with httpx.AsyncClient(timeout=30.0) as client:
                         response = await client.post(
                             f"{CHART_SERVICE}/capture-chart",
-                            json={"symbol": instrument, "timeframe": timeframe}
+                            json={
+                                "symbol": instrument, 
+                                "timeframe": timeframe,
+                                "chart_type": "tradingview"
+                            }
                         )
                         response.raise_for_status()
                         chart_data = response.json()
                         
-                        if chart_data.get("status") == "success":
+                        if chart_data.get("status") == "success" and chart_data.get("image_url"):
                             # Send chart image
                             await bot.edit_message_text(
                                 chat_id=chat_id,
                                 message_id=message_id,
-                                text=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{chart_data.get('analysis', '')}",
+                                text=f"📊 Technical Analysis for {instrument} ({timeframe})\n\n{chart_data.get('analysis', 'No analysis available.')}",
                                 reply_markup=reply_markup,
                                 parse_mode='Markdown'
                             )
                             
-                            if chart_data.get("image"):
-                                await bot.send_photo(
-                                    chat_id=chat_id,
-                                    photo=chart_data["image"],
-                                    caption=f"TradingView Chart - {instrument} {timeframe}"
-                                )
+                            # Send chart as photo using URL
+                            await bot.send_photo(
+                                chat_id=chat_id,
+                                photo=chart_data["image_url"],
+                                caption=f"TradingView Chart - {instrument} {timeframe}"
+                            )
                         else:
-                            raise Exception(f"Chart service error: {chart_data.get('error', 'Unknown error')}")
+                            error_msg = chart_data.get("error", "Unknown error occurred")
+                            logger.error(f"Chart service error: {error_msg}")
+                            raise Exception(f"Chart service error: {error_msg}")
                             
                 except Exception as e:
                     logger.error(f"Error processing chart request: {str(e)}")
