@@ -394,7 +394,7 @@ async def telegram_webhook(request: Request):
     """Handle Telegram webhook updates"""
     try:
         data = await request.json()
-        logger.debug(f"Webhook data: {data}")
+        logger.info(f"Received webhook data: {json.dumps(data, indent=2)}")
         update = Update.de_json(data, bot)
         
         if update.callback_query:
@@ -402,82 +402,117 @@ async def telegram_webhook(request: Request):
             chat_id = query.message.chat.id
             message_id = query.message.message_id
             callback_data = query.data
+            logger.info(f"Received callback query - chat_id: {chat_id}, callback_data: {callback_data}")
             
-            if chat_id not in user_states:
-                await query.answer("Session expired. Please request a new signal.")
-                return {"status": "error", "detail": "Session expired"}
+            # Store user state when sending signal
+            if not hasattr(bot, 'user_states'):
+                bot.user_states = {}
             
-            state = user_states[chat_id]
+            if chat_id not in bot.user_states:
+                logger.info(f"Creating new state for chat_id {chat_id}")
+                bot.user_states[chat_id] = {}
             
-            if callback_data.startswith("chart_"):
-                logger.info("Processing technical analysis request")
+            # Handle sentiment button
+            if callback_data.startswith("sentiment_"):
+                instrument = callback_data.split("_")[1]
+                logger.info(f"Processing sentiment analysis for {instrument}")
+                
                 try:
-                    instrument, timeframe = callback_data.split("_")[1:]
+                    # Get latest news
+                    news_data = {
+                        "instrument": instrument,
+                        "articles": [
+                            {"title": "COMMENT-EUR/USD longs need Fed, data to validate bullish techs, spreads", 
+                             "content": "COMMENT-EUR/USD longs need Fed, data to validate bullish techs, spreads"},
+                            {"title": "FX options wrap - Safe-haven vols surge as risk aversion bites",
+                             "content": "FX options wrap - Safe-haven vols surge as risk aversion bites"}
+                        ]
+                    }
                     
-                    # Create keyboard with back button
+                    # Get sentiment analysis
+                    analysis = await get_news_analysis(instrument, news_data["articles"])
+                    
+                    # Create back button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    # Check if we already have the chart image
-                    chart_image = state.get("chart_image")
+                    # Send analysis
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=analysis,
+                        reply_markup=reply_markup,
+                        parse_mode='Markdown'
+                    )
                     
-                    if not chart_image:
-                        # Show loading message and generate chart
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            text=f"📊 Loading chart for {instrument} ({timeframe})...",
-                            reply_markup=reply_markup
-                        )
-                        
-                        chart_image = await get_chart_image(instrument, timeframe)
-                        if chart_image:
-                            state["chart_image"] = chart_image
-                    
-                    if chart_image:
-                        logger.info("Chart image available, sending to Telegram")
-                        try:
-                            # Convert base64 to bytes
-                            image_bytes = base64.b64decode(chart_image)
-                            logger.debug(f"Decoded image size: {len(image_bytes)} bytes")
-                            
-                            # Send new message with chart
-                            await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                            await bot.send_photo(
-                                chat_id=chat_id,
-                                photo=image_bytes,
-                                caption=f"📈 Technical Analysis for {instrument} ({timeframe})",
-                                reply_markup=reply_markup
-                            )
-                            logger.info("Chart image sent successfully")
-                        except Exception as e:
-                            logger.exception("Error sending chart image")
-                            await bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text="❌ Error sending chart image.",
-                                reply_markup=reply_markup
-                            )
-                    else:
-                        logger.error("No chart image available")
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            text="❌ Sorry, could not generate chart at this time.",
-                            reply_markup=reply_markup
-                        )
-                        
-                except KeyError as e:
-                    logger.exception("Missing key in signal data")
-                    await query.answer("Error: Invalid signal data format.")
                 except Exception as e:
-                    logger.exception("Error processing technical analysis")
-                    await query.answer("Error processing technical analysis request.")
-                    
-            elif callback_data == "back_to_signal":
+                    logger.error(f"Error processing sentiment: {str(e)}")
+                    await query.answer("Error processing sentiment analysis")
+            
+            # Handle chart button
+            elif callback_data.startswith("chart_"):
+                logger.info(f"Processing technical analysis request: {callback_data}")
                 try:
-                    # Get original message data
-                    original_message = state.get("original_message", {})
+                    parts = callback_data.split("_")
+                    if len(parts) != 3:
+                        raise ValueError(f"Invalid callback data format: {callback_data}")
+                        
+                    instrument = parts[1]
+                    timeframe = parts[2]
+                    
+                    # Create back button
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    # Show loading message
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"📊 Loading chart for {instrument} ({timeframe})...",
+                        reply_markup=reply_markup
+                    )
+                    
+                    # Get chart image
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        response = await client.post(
+                            f"{CHART_SERVICE}/capture-chart",
+                            json={"symbol": instrument, "timeframe": timeframe}
+                        )
+                        response.raise_for_status()
+                        chart_data = response.json()
+                        
+                    if "image" in chart_data:
+                        # Convert base64 to bytes
+                        image_bytes = base64.b64decode(chart_data["image"])
+                        
+                        # Send chart
+                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                        await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=image_bytes,
+                            caption=f"📈 Technical Analysis for {instrument} ({timeframe})",
+                            reply_markup=reply_markup
+                        )
+                    else:
+                        raise ValueError("No image data in response")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing chart: {str(e)}")
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=f"❌ Error generating chart: {str(e)}",
+                        reply_markup=reply_markup
+                    )
+            
+            # Handle back button
+            elif callback_data == "back_to_signal":
+                logger.info("Processing back to signal request")
+                try:
+                    # Get original message
+                    state = bot.user_states.get(chat_id, {})
+                    original_message = state.get("original_message")
+                    
                     if not original_message:
                         await query.answer("Original message not found")
                         return
@@ -485,30 +520,32 @@ async def telegram_webhook(request: Request):
                     # Recreate original keyboard
                     keyboard = [
                         [
-                            InlineKeyboardButton("Market Sentiment 📊", callback_data=f"sentiment_{state['signal_data']['instrument']}"),
-                            InlineKeyboardButton("Technical Analysis 📈", callback_data=f"chart_{state['signal_data']['instrument']}_{state['signal_data']['timeframe']}")
+                            InlineKeyboardButton("Market Sentiment 📊", callback_data=f"sentiment_{instrument}"),
+                            InlineKeyboardButton("Technical Analysis 📈", callback_data=f"chart_{instrument}_{timeframe}")
                         ]
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    # Delete current message and send original
-                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                    await bot.send_message(
+                    # Send original message
+                    await bot.edit_message_text(
                         chat_id=chat_id,
-                        text=original_message["text"],
+                        message_id=message_id,
+                        text=original_message,
                         parse_mode='Markdown',
                         reply_markup=reply_markup
                     )
                     
                 except Exception as e:
-                    logger.exception("Error returning to signal")
+                    logger.error(f"Error returning to signal: {str(e)}")
                     await query.answer("Error returning to signal")
             
             await query.answer()
             return {"status": "success"}
             
+        return {"status": "success"}
+        
     except Exception as e:
-        logger.exception("Error handling webhook")
+        logger.error(f"Error in webhook: {str(e)}")
         return {"status": "error", "detail": str(e)}
 
 async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> Dict[str, Any]:
