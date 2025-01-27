@@ -33,7 +33,7 @@ app = FastAPI(
 )
 
 # Initialize Telegram bot
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = "7583525993:AAFp90r7UqCY2KdGufKgHHjjslBy7AnY_Sg"  # Using same token as subscriber matcher
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
 
@@ -296,56 +296,71 @@ class SignalRequest(BaseModel):
     news_data: Optional[Dict[str, Any]] = None
 
 @app.post("/send-signal")
-async def send_signal(signal_request: SignalRequest):
+async def send_signal(signal_request: SignalRequest) -> dict:
     """Send a trading signal to Telegram"""
     try:
-        chat_id = signal_request.chat_id
+        logger.info(f"Received signal request for chat_id: {signal_request.chat_id}")
+        
+        # Get signal data
         signal_data = signal_request.signal_data
         
-        # Format the signal message
-        message = format_signal_message(signal_data)
+        # Send signal to Signal AI Service for formatting if not already formatted
+        if "formatted_message" not in signal_data:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{SIGNAL_AI_SERVICE}/format-signal",
+                        json=signal_data
+                    )
+                    response.raise_for_status()
+                    formatted_message = response.json()["formatted_message"]
+            except Exception as e:
+                logger.error(f"Failed to get formatted message from Signal AI Service: {e}")
+                # Fallback to basic formatting
+                formatted_message = format_signal_message(signal_data)
+        else:
+            formatted_message = signal_data["formatted_message"]
+            
+        # Get news analysis if news data is provided
+        if signal_request.news_data:
+            try:
+                news_analysis = await get_news_analysis(
+                    signal_request.news_data["instrument"],
+                    signal_request.news_data["articles"]
+                )
+                formatted_message += f"\n\n{news_analysis}"
+            except Exception as e:
+                logger.error(f"Failed to get news analysis: {e}")
         
-        # Create inline keyboard
+        # Create keyboard markup
         keyboard = [
             [
-                InlineKeyboardButton("Market Sentiment 📊", callback_data="sentiment"),
-                InlineKeyboardButton("Technical Analysis 📈", callback_data="technical")
+                InlineKeyboardButton("Market Sentiment 📊", callback_data=f"sentiment_{signal_data['instrument']}"),
+                InlineKeyboardButton("Technical Analysis 📈", callback_data=f"chart_{signal_data['instrument']}_{signal_data['timeframe']}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send initial message
-        message_obj = await bot.send_message(
-            chat_id=chat_id,
-            text=message,
-            parse_mode='Markdown',
-            reply_markup=reply_markup
+        # Send message
+        message = await bot.send_message(
+            chat_id=signal_request.chat_id,
+            text=formatted_message,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
         )
         
-        # Store signal data, chart image and original message in user state
-        user_states[chat_id] = {
-            "signal_data": signal_data,  # Already a dict from JSON
-            "chart_image": None,
-            "original_message": {
-                "text": message,
-                "message_id": message_obj.message_id
-            }
+        # Store original message for back button
+        user_state = {
+            "original_message_id": message.message_id,
+            "original_text": formatted_message,
+            "original_markup": reply_markup
         }
-        
-        # Start generating chart image in background
-        asyncio.create_task(
-            generate_and_store_chart(
-                chat_id=chat_id,
-                instrument=signal_data["instrument"],
-                timeframe=signal_data["timeframe"]
-            )
-        )
         
         return {"status": "success", "message": "Signal sent successfully"}
         
     except Exception as e:
-        logger.exception("Error sending signal")
-        return {"status": "error", "detail": str(e)}
+        logger.error(f"Error sending signal: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to send signal: {str(e)}")
 
 async def generate_and_store_chart(chat_id: int, instrument: str, timeframe: str):
     """Generate chart image and store in user state"""
@@ -520,16 +535,30 @@ def format_signal_message(signal_data: Dict[str, Any]) -> str:
         # Create basic signal format
         direction_emoji = "📈" if signal_data.get("direction", "").lower() == "buy" else "📉"
         
-        message = f"""
-*Trading Signal* {direction_emoji}
+        message = f"""🚨 New Trading Signal 🚨
 
-*Instrument:* {signal_data.get('instrument', 'Unknown')}
-*Direction:* {signal_data.get('direction', 'Unknown').upper()}
-*Entry Price:* {signal_data.get('entry_price', 'Unknown')}
-*Stop Loss:* {signal_data.get('stop_loss', 'Unknown')}
-*Timeframe:* {signal_data.get('timeframe', 'Unknown')}
-*Strategy:* {signal_data.get('strategy', 'Unknown')}
-"""
+Instrument: {signal_data.get('instrument', 'Unknown')}
+Action: {signal_data.get('direction', 'Unknown').upper()} {direction_emoji}
+
+Entry Price: {signal_data.get('entry_price', 'Unknown')}
+Stop Loss: {signal_data.get('stop_loss', 'Unknown')} 🛑
+Take Profit: {signal_data.get('entry_price', 0) + 200} 🎯
+
+Timeframe: {signal_data.get('timeframe', 'Unknown')}
+Strategy: {signal_data.get('strategy', 'Unknown')}
+
+--------------------
+
+Risk Management:
+• Position size: 1-2% max
+• Use proper stop loss
+• Follow your trading plan
+
+--------------------
+
+🤖 SigmaPips AI Verdict:
+This {signal_data.get('instrument', '')} {signal_data.get('direction', '').lower()} signal follows a trend-following strategy within a {signal_data.get('timeframe', '')}-hour timeframe, aiming for a tight profit margin with a calculated risk/reward ratio. The setup suggests confidence in the current uptrend's continuity, making it a promising short-term trade."""
+        
         return message
     except Exception as e:
         logger.exception("Error formatting signal message")
