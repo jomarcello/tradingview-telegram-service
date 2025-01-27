@@ -13,20 +13,16 @@ import base64
 # Load environment variables
 load_dotenv()
 
-# Configure logging
+# Setup logging
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,  # Changed to DEBUG for more detailed logs
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Log to console
+        logging.FileHandler('telegram_service.log')  # Also log to file
+    ]
 )
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Add file handler for debugging
-file_handler = logging.FileHandler('telegram_bot.log')
-file_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -43,8 +39,10 @@ if not BOT_TOKEN:
 # Service URLs
 SIGNAL_AI_SERVICE = os.getenv("SIGNAL_AI_SERVICE", "https://tradingview-signal-ai-service-production.up.railway.app")
 NEWS_AI_SERVICE = os.getenv("NEWS_AI_SERVICE", "https://tradingview-news-ai-service-production.up.railway.app")
-CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service.up.railway.app")
+CHART_SERVICE = os.getenv("CHART_SERVICE", "https://tradingview-chart-service-production.up.railway.app")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://tradingview-telegram-service-production.up.railway.app/webhook")
+
+logger.info(f"Initialized with services: SIGNAL={SIGNAL_AI_SERVICE}, NEWS={NEWS_AI_SERVICE}, CHART={CHART_SERVICE}")
 
 # Initialize bot
 bot = Bot(token=BOT_TOKEN)
@@ -128,21 +126,33 @@ def calculate_rr_levels(instrument: str, entry_price: float, direction: str, ris
 async def get_chart_image(instrument: str, timeframe: str) -> Optional[str]:
     """Get chart screenshot from Chart Service"""
     try:
-        logger.info(f"Getting chart for {instrument} {timeframe} from {CHART_SERVICE}")
+        logger.debug(f"Starting chart request for {instrument} {timeframe}")
+        logger.debug(f"Chart service URL: {CHART_SERVICE}")
+        
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{CHART_SERVICE}/capture-chart",
-                json={"symbol": instrument, "timeframe": timeframe}
-            )
-            logger.info(f"Chart service response: {response.status_code} {response.text}")
-            if response.status_code == 200:
-                result = response.json()
-                return result["image"]  # Base64 encoded image
-            else:
-                logger.warning(f"Chart Service failed: {response.text}")
+            url = f"{CHART_SERVICE}/capture-chart"
+            data = {"symbol": instrument, "timeframe": timeframe}
+            logger.debug(f"Making request to {url} with data: {data}")
+            
+            try:
+                response = await client.post(url, json=data)
+                logger.debug(f"Raw response: {response.text}")
+                logger.info(f"Chart service response: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    image_size = len(result.get("image", ""))
+                    logger.info(f"Received image of size: {image_size} bytes")
+                    return result.get("image")
+                else:
+                    logger.error(f"Chart Service error: {response.status_code} - {response.text}")
+                    return None
+            except Exception as e:
+                logger.exception("Error during chart service request")
                 return None
+                
     except Exception as e:
-        logger.warning(f"Error getting chart image: {str(e)}")
+        logger.exception("Error in get_chart_image")
         return None
 
 @app.post("/calculate-rr")
@@ -240,58 +250,58 @@ async def telegram_webhook(request: Request):
     """Handle Telegram webhook updates"""
     try:
         data = await request.json()
-        logger.info(f"Received webhook data: {data}")
+        logger.debug(f"Webhook data: {data}")
         update = Update.de_json(data, bot)
         
         if update.callback_query:
             query = update.callback_query
             chat_id = query.message.chat.id
-            logger.info(f"Processing callback query for chat_id {chat_id}")
+            callback_data = query.data
+            logger.info(f"Received callback query: {callback_data} from chat_id: {chat_id}")
             
             if chat_id not in user_states:
-                logger.warning(f"Chat ID {chat_id} not found in user_states")
+                logger.warning(f"No state found for chat_id {chat_id}")
+                logger.debug(f"Current user_states: {user_states}")
                 await query.answer("Session expired. Please request a new signal.")
                 return
             
-            if query.data == "technical":
+            if callback_data == "technical":
                 logger.info("Processing technical analysis request")
+                state = user_states[chat_id]
+                logger.debug(f"User state for {chat_id}: {state}")
+                
                 # Get chart screenshot
-                instrument = user_states[chat_id]["signal_data"]["instrument"]
-                timeframe = user_states[chat_id]["signal_data"]["timeframe"]
-                logger.info(f"Getting chart for {instrument} {timeframe}")
+                instrument = state["signal_data"]["instrument"]
+                timeframe = state["signal_data"]["timeframe"]
+                logger.info(f"Requesting chart for {instrument} {timeframe}")
                 
                 chart_image = await get_chart_image(instrument, timeframe)
                 
                 if chart_image:
                     logger.info("Chart image received, sending to Telegram")
-                    # Convert base64 to bytes
-                    image_bytes = base64.b64decode(chart_image)
-                    
-                    # Send chart image
-                    await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=image_bytes,
-                        caption=f"📈 Technical Analysis for {instrument} ({timeframe})"
-                    )
-                    logger.info("Chart image sent successfully")
+                    try:
+                        # Convert base64 to bytes
+                        image_bytes = base64.b64decode(chart_image)
+                        logger.debug(f"Decoded image size: {len(image_bytes)} bytes")
+                        
+                        # Send chart image
+                        await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=image_bytes,
+                            caption=f"📈 Technical Analysis for {instrument} ({timeframe})"
+                        )
+                        logger.info("Chart image sent successfully")
+                    except Exception as e:
+                        logger.exception("Error sending chart image")
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text="❌ Error sending chart image."
+                        )
                 else:
-                    logger.error("Failed to get chart image")
+                    logger.error("No chart image received")
                     await bot.send_message(
                         chat_id=chat_id,
                         text="❌ Sorry, could not generate chart at this time."
-                    )
-                
-            elif query.data == "sentiment":
-                if user_states[chat_id].get("news_data"):
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=user_states[chat_id]["news_data"]["analysis"],
-                        parse_mode='Markdown'
-                    )
-                else:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="❌ No sentiment analysis available at this time."
                     )
             
             await query.answer()
