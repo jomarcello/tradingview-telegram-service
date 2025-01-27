@@ -163,14 +163,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await query.answer("Message data not found")
                     return
 
-                # Get market sentiment from news-ai-service
-                sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
+                # First get news from signal processor
+                signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
                 async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        signal_processor_url,
+                        params={"instrument": message_data["symbol"]}
+                    )
+                    
+                    if response.status_code != 200:
+                        logger.error(f"Failed to get news: {response.status_code}")
+                        await query.answer("Failed to get news")
+                        return
+                    
+                    news_data = response.json()
+                    if not news_data.get("articles"):
+                        logger.error("No news articles found")
+                        await query.answer("No news articles found")
+                        return
+
+                    # Send news to AI service for analysis
+                    sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
                     response = await client.post(
                         sentiment_url,
                         json={
                             "instrument": message_data["symbol"],
-                            "articles": []  # Service will fetch articles
+                            "articles": news_data["articles"]
                         }
                     )
                     
@@ -191,7 +209,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     # Send sentiment with Back button
                     await bot.send_message(
                         chat_id=chat_id,
-                        text=data["sentiment"],
+                        text=data["analysis"],
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
