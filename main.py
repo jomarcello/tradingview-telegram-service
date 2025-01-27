@@ -9,6 +9,7 @@ from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, Application, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler
 from dotenv import load_dotenv
 import base64
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -296,24 +297,13 @@ class SignalRequest(BaseModel):
 
 @app.post("/send-signal")
 async def send_signal(signal_request: SignalRequest):
-    """Send a signal to a Telegram chat"""
+    """Send a trading signal to Telegram"""
     try:
         chat_id = signal_request.chat_id
         signal_data = signal_request.signal_data
-        news_data = signal_request.news_data
         
-        logger.info(f"Received signal request for chat_id {chat_id}")
-        logger.debug(f"Signal data: {signal_data}")
-        
-        # Store signal data for later use
-        user_states[chat_id] = {
-            "signal_data": signal_data,
-            "news_data": news_data
-        }
-        logger.debug(f"Updated user_states for {chat_id}: {user_states[chat_id]}")
-        
-        # Format and send signal
-        signal_text = await format_signal(signal_data)
+        # Format the signal message
+        message = await format_signal_message(signal_data)
         
         # Create inline keyboard
         keyboard = [
@@ -324,19 +314,49 @@ async def send_signal(signal_request: SignalRequest):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send message with inline keyboard
-        await bot.send_message(
+        # Store signal data and chart image in user state
+        user_states[chat_id] = {
+            "signal_data": signal_data,
+            "chart_image": None  # Will be populated with the screenshot
+        }
+        
+        # Send initial message
+        message_obj = await bot.send_message(
             chat_id=chat_id,
-            text=signal_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+            text=message,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        
+        # Start generating chart image in background
+        asyncio.create_task(
+            generate_and_store_chart(
+                chat_id=chat_id,
+                instrument=signal_data["instrument"],
+                timeframe=signal_data["timeframe"]
+            )
         )
         
         return {"status": "success", "message": "Signal sent successfully"}
         
     except Exception as e:
         logger.exception("Error sending signal")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "detail": str(e)}
+
+async def generate_and_store_chart(chat_id: int, instrument: str, timeframe: str):
+    """Generate chart image and store in user state"""
+    try:
+        logger.info(f"Generating chart for {instrument} {timeframe}")
+        chart_image = await get_chart_image(instrument, timeframe)
+        
+        if chart_image and chat_id in user_states:
+            user_states[chat_id]["chart_image"] = chart_image
+            logger.info(f"Chart image stored for chat_id {chat_id}")
+        else:
+            logger.error(f"Failed to generate/store chart for chat_id {chat_id}")
+            
+    except Exception as e:
+        logger.exception("Error generating chart")
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -365,27 +385,31 @@ async def telegram_webhook(request: Request):
                 logger.debug(f"User state for {chat_id}: {state}")
                 
                 try:
-                    # Get chart screenshot
                     instrument = state["signal_data"]["instrument"]
                     timeframe = state["signal_data"]["timeframe"]
-                    logger.info(f"Requesting chart for {instrument} {timeframe}")
                     
                     # Create keyboard with back button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    # First update the message to show loading
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=f"📊 Loading chart for {instrument} ({timeframe})...",
-                        reply_markup=reply_markup
-                    )
+                    # Check if we already have the chart image
+                    chart_image = state.get("chart_image")
                     
-                    chart_image = await get_chart_image(instrument, timeframe)
+                    if not chart_image:
+                        # Show loading message and generate chart
+                        await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=f"📊 Loading chart for {instrument} ({timeframe})...",
+                            reply_markup=reply_markup
+                        )
+                        
+                        chart_image = await get_chart_image(instrument, timeframe)
+                        if chart_image:
+                            state["chart_image"] = chart_image
                     
                     if chart_image:
-                        logger.info("Chart image received, sending to Telegram")
+                        logger.info("Chart image available, sending to Telegram")
                         try:
                             # Convert base64 to bytes
                             image_bytes = base64.b64decode(chart_image)
@@ -409,7 +433,7 @@ async def telegram_webhook(request: Request):
                                 reply_markup=reply_markup
                             )
                     else:
-                        logger.error("No chart image received")
+                        logger.error("No chart image available")
                         await bot.edit_message_text(
                             chat_id=chat_id,
                             message_id=message_id,
@@ -431,7 +455,7 @@ async def telegram_webhook(request: Request):
                 try:
                     # Recreate original signal message
                     signal_data = state["signal_data"]
-                    message = await format_signal(signal_data)
+                    message = await format_signal_message(signal_data)
                     
                     # Recreate original keyboard
                     keyboard = [
@@ -480,8 +504,8 @@ async def get_news_analysis(instrument: str, articles: List[Dict[str, str]]) -> 
         logger.warning(f"Error getting news analysis: {str(e)}")
         return None
 
-async def format_signal(signal_data: Dict[str, Any]) -> str:
-    """Format signal using the Signal AI Service"""
+async def format_signal_message(signal_data: Dict[str, Any]) -> str:
+    """Format signal message"""
     try:
         # Create basic signal format
         direction_emoji = "📈" if signal_data.get("direction", "").lower() == "buy" else "📉"
