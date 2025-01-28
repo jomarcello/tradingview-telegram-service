@@ -181,14 +181,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Update the message with the chart image
-                        await query.edit_message_media(
-                            media=InputMediaPhoto(
-                                media=response.content,
-                                caption=f"📊 Technical Analysis for {message_data['symbol']}"
-                            ),
+                        # Send as new message and store reference
+                        chart_message = await query.get_bot().send_photo(
+                            chat_id=query.message.chat_id,
+                            photo=response.content,
+                            caption=f"📊 Technical Analysis for {message_data['symbol']}",
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
+                        
+                        # Store reference to chart message
+                        messages[str(chart_message.message_id)] = {
+                            "original_text": message_data["original_text"],
+                            "text": message_data["text"],
+                            "symbol": message_data["symbol"],
+                            "timeframe": message_data["timeframe"],
+                            "is_chart": True
+                        }
+                        save_messages(messages)
+                        
+                        # Delete the original message
+                        await query.message.delete()
                         
                     except Exception as e:
                         logger.error(f"Error getting chart: {str(e)}")
@@ -320,8 +332,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     logger.error("No message data found")
                     await query.edit_message_text("❌ Message expired. Please request a new signal.")
                     return
-                    
-                # Restore original keyboard
+                
+                # Create new message with original content
                 keyboard = [
                     [
                         InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
@@ -329,12 +341,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     ]
                 ]
                 
-                # Restore original message
-                await query.edit_message_text(
+                # Send new message with original content
+                new_message = await query.get_bot().send_message(
+                    chat_id=query.message.chat_id,
                     text=message_data["original_text"],
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
+                
+                # Store new message
+                messages[str(new_message.message_id)] = {
+                    "original_text": message_data["original_text"],
+                    "text": message_data["text"],
+                    "symbol": message_data["symbol"],
+                    "timeframe": message_data["timeframe"]
+                }
+                save_messages(messages)
+                
+                # Delete the current message
+                await query.message.delete()
                 
             except Exception as e:
                 logger.error(f"Error in back to signal handler: {str(e)}")
