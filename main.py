@@ -75,16 +75,16 @@ class CalendarRequest(BaseModel):
 
 def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format the signal message"""
-    direction = "BUY 📈" if signal_data["direction"].upper() == "BUY" else "SELL 📉"
+    direction = "BUY " if signal_data["direction"].upper() == "BUY" else "SELL "
     
-    message = f"""🎯 New Trading Signal 🎯
+    message = f""" New Trading Signal 
 
 Instrument: {signal_data['instrument']}
 Action: {direction}
 
 Entry Price: {signal_data['entry_price']}
-Stop Loss: {signal_data['stop_loss']} 🛑
-Take Profit: {signal_data['take_profit']} 🎯
+Stop Loss: {signal_data['stop_loss']} 
+Take Profit: {signal_data['take_profit']} 
 
 Timeframe: {signal_data['timeframe']}
 Strategy: {signal_data['strategy']}
@@ -98,11 +98,18 @@ Risk Management:
 
 --------------------
 
-🤖 SigmaPips AI Verdict:
+ SigmaPips AI Verdict:
 {signal_data.get('ai_verdict', 'AI analysis not available')}
 
 Risk/Reward Ratio: {signal_data.get('risk_reward_ratio', 'Not available')}"""
     return message
+
+def escape_markdown(text: str) -> str:
+    """Escape special characters for MarkdownV2."""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 
 @app.post("/send-signal")
 async def send_signal(signal_request: SignalRequest) -> dict:
@@ -114,11 +121,11 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         # Create keyboard markup
         keyboard = [
             [
-                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
+                InlineKeyboardButton("", callback_data="technical_analysis"),
+                InlineKeyboardButton("", callback_data="market_sentiment")
             ],
             [
-                InlineKeyboardButton("📅 Economic Calendar", callback_data="economic_calendar")
+                InlineKeyboardButton("", callback_data="economic_calendar")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -212,14 +219,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_data = messages.get(str(query.message.message_id))
                 if not message_data:
                     logger.error("No message data found")
-                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
+                    await query.edit_message_text(" Message expired. Please request a new signal.")
                     return
 
                 logger.info(f"Getting chart for symbol: {message_data['symbol']}")
                 
                 # Update the current message to show loading
                 await query.edit_message_text(
-                    text="🔄 Generating technical analysis chart...",
+                    text=" Generating technical analysis chart...",
                     parse_mode='Markdown'
                 )
                 
@@ -237,13 +244,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         response.raise_for_status()
                         
                         # Create keyboard with Back button
-                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                         
                         # Send as new message and store reference
                         chart_message = await query.get_bot().send_photo(
                             chat_id=query.message.chat_id,
                             photo=response.content,
-                            caption=f"📊 Technical Analysis for {message_data['symbol']}",
+                            caption=f" Technical Analysis for {message_data['symbol']}",
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
                         
@@ -262,9 +269,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                     except Exception as e:
                         logger.error(f"Error getting chart: {str(e)}")
-                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                         await query.edit_message_text(
-                            text=f"❌ Failed to get chart: {str(e)}",
+                            text=f" Failed to get chart: {str(e)}",
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
@@ -273,9 +280,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in technical analysis handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 try:
-                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                     await query.edit_message_text(
-                        text="❌ An error occurred",
+                        text=" An error occurred",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
@@ -291,14 +298,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_data = messages.get(str(query.message.message_id))
                 if not message_data:
                     logger.error("No message data found")
-                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
+                    await query.edit_message_text(" Message expired. Please request a new signal.")
                     return
 
                 logger.info(f"Getting news for symbol: {message_data['symbol']}")
                 
                 # Update the current message to show loading
                 await query.edit_message_text(
-                    text="🔄 Analyzing market sentiment...",
+                    text=" Analyzing market sentiment...",
                     parse_mode='Markdown'
                 )
                 
@@ -312,9 +319,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         
                         if response.status_code != 200:
-                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                             await query.edit_message_text(
-                                text="❌ Failed to get news",
+                                text=" Failed to get news",
                                 parse_mode='Markdown',
                                 reply_markup=InlineKeyboardMarkup(keyboard)
                             )
@@ -322,9 +329,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         news_data = response.json()
                         if not news_data.get("articles"):
-                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                             await query.edit_message_text(
-                                text="❌ No news articles found",
+                                text=" No news articles found",
                                 parse_mode='Markdown',
                                 reply_markup=InlineKeyboardMarkup(keyboard)
                             )
@@ -341,9 +348,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                         
                         if response.status_code != 200:
-                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                             await query.edit_message_text(
-                                text="❌ Failed to get sentiment",
+                                text=" Failed to get sentiment",
                                 parse_mode='Markdown',
                                 reply_markup=InlineKeyboardMarkup(keyboard)
                             )
@@ -352,7 +359,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         data = response.json()
 
                         # Create keyboard with Back button
-                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                         
                         # Send as new message and store reference
                         sentiment_message = await query.get_bot().send_message(
@@ -377,9 +384,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                     except Exception as e:
                         logger.error(f"Error getting sentiment: {str(e)}")
-                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                         await query.edit_message_text(
-                            text="❌ An error occurred",
+                            text=" An error occurred",
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
@@ -388,9 +395,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error in market sentiment handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 try:
-                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
                     await query.edit_message_text(
-                        text="❌ An error occurred",
+                        text=" An error occurred",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
@@ -410,14 +417,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     else:
                         await query.edit_message_text(
-                            text="❌ Error fetching calendar data. Please try again later.",
+                            text=" Error fetching calendar data. Please try again later.",
                             parse_mode=constants.ParseMode.HTML
                         )
             except Exception as e:
                 logger.error(f"Error in economic calendar handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 await query.edit_message_text(
-                    text="❌ An error occurred. Please try again later.",
+                    text=" An error occurred. Please try again later.",
                     parse_mode=constants.ParseMode.HTML
                 )
 
@@ -427,17 +434,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_data = messages.get(str(query.message.message_id))
                 if not message_data:
                     logger.error("No message data found")
-                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
+                    await query.edit_message_text(" Message expired. Please request a new signal.")
                     return
                 
                 # Create new message with original content
                 keyboard = [
                     [
-                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-                        InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
+                        InlineKeyboardButton("", callback_data="technical_analysis"),
+                        InlineKeyboardButton("", callback_data="market_sentiment")
                     ],
                     [
-                        InlineKeyboardButton("📅 Economic Calendar", callback_data="economic_calendar")
+                        InlineKeyboardButton("", callback_data="economic_calendar")
                     ]
                 ]
                 
@@ -466,7 +473,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 try:
                     await query.edit_message_text(
-                        text="❌ An error occurred",
+                        text=" An error occurred",
                         parse_mode='Markdown'
                     )
                 except:
@@ -509,6 +516,9 @@ async def get_logs():
 async def startup():
     """Set webhook on startup"""
     try:
+        # Delete any existing webhook
+        await bot.delete_webhook()
+        
         # Start the bot in polling mode
         await application.initialize()
         await application.start()
@@ -524,6 +534,7 @@ async def shutdown():
     """Stop the bot when shutting down"""
     try:
         await application.stop()
+        await bot.delete_webhook()  # Clean up webhook on shutdown
         logger.info("Telegram bot stopped successfully")
     except Exception as e:
         logger.error(f"Error stopping Telegram bot: {str(e)}")
