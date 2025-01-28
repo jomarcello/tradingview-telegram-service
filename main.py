@@ -262,13 +262,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         symbol = message_data["symbol"]
         timeframe = message_data["timeframe"]
+        logger.info(f"Processing callback for symbol: {symbol}, timeframe: {timeframe}")
 
         if query.data == "technical":
             try:
                 # Show loading message
                 loading_message = await show_loading_message(original_message, "Technical Analysis")
+                logger.info("Loading message sent")
                 
                 # Get chart from chart service
+                logger.info(f"Requesting chart from {CHART_SERVICE_URL}")
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.get(
                         f"{CHART_SERVICE_URL}/chart",
@@ -279,25 +282,38 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         }
                     )
                     response.raise_for_status()
+                    logger.info(f"Got chart response, content length: {len(response.content)} bytes")
                     
                     # Send chart as photo with Back to Signal button
                     keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                     reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    await bot.send_photo(
-                        chat_id=original_message.chat.id,
-                        photo=response.content,
-                        caption=f"📊 Technical Analysis Chart for {symbol}",
-                        reply_markup=reply_markup
-                    )
+                    logger.info("Sending photo to Telegram...")
+                    try:
+                        await bot.send_photo(
+                            chat_id=original_message.chat.id,
+                            photo=response.content,
+                            caption=f"📊 Technical Analysis Chart for {symbol}",
+                            reply_markup=reply_markup
+                        )
+                        logger.info("Photo sent successfully")
+                    except Exception as e:
+                        logger.error(f"Error sending photo: {str(e)}")
+                        logger.error(f"Full error traceback: {traceback.format_exc()}")
+                        raise
                     
             except Exception as e:
                 logger.error(f"Error getting technical analysis: {str(e)}")
+                logger.error(f"Full error traceback: {traceback.format_exc()}")
                 await original_message.reply_text("❌ Error loading technical analysis. Please try again later.")
             finally:
                 if loading_message:
-                    await loading_message.delete()
-
+                    try:
+                        await loading_message.delete()
+                        logger.info("Loading message deleted")
+                    except Exception as e:
+                        logger.error(f"Error deleting loading message: {str(e)}")
+                    
         elif query.data == "sentiment":
             try:
                 # Show loading message
