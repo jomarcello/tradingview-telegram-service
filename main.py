@@ -6,7 +6,7 @@ import base64
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 import traceback
@@ -181,16 +181,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Send the chart image directly from response content
-                        await query.get_bot().send_photo(
-                            chat_id=query.message.chat_id,
-                            photo=response.content,
-                            caption=f"📊 Technical Analysis for {message_data['symbol']}",
+                        # Update the message with the chart image
+                        await query.edit_message_media(
+                            media=InputMediaPhoto(
+                                media=response.content,
+                                caption=f"📊 Technical Analysis for {message_data['symbol']}"
+                            ),
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
-                        
-                        # Delete the loading message
-                        await query.message.delete()
                         
                     except Exception as e:
                         logger.error(f"Error getting chart: {str(e)}")
