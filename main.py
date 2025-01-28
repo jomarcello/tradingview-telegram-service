@@ -91,30 +91,35 @@ def format_signal_message(signal_data: Dict[str, Any]) -> str:
         take_profit = signal_data.get("take_profit", "0.0")
         timeframe = signal_data.get("timeframe", "Unknown")
         strategy = signal_data.get("strategy", "Unknown")
-        timestamp = signal_data.get("timestamp", "Unknown")
         
-        # Get optional fields
-        news_sentiment = signal_data.get("news_sentiment", None)
-        ai_analysis = signal_data.get("ai_analysis", None)
+        # Format base message with emojis
+        message = f"🎯 New Trading Signal 🎯\n\n"
+        message += f"Instrument: {instrument}\n"
+        message += f"Action: {direction} ⬇️\n\n"  # Use ⬆️ for BUY
         
-        # Format base message
-        message = f"*{instrument} {direction} Signal*\n\n"
-        message += f"*Strategy:* {strategy}\n"
-        message += f"*Timeframe:* {timeframe}\n"
-        message += f"*Entry Price:* {entry_price}\n"
-        message += f"*Stop Loss:* {stop_loss}\n"
-        message += f"*Take Profit:* {take_profit}\n"
+        message += f"Entry Price: {entry_price}\n"
+        message += f"Stop Loss: {stop_loss} 🔴\n"
+        message += f"Take Profit: {take_profit} 🎯\n\n"
         
-        # Add news sentiment if available
-        if news_sentiment:
-            message += f"\n*News Sentiment:*\n{news_sentiment}\n"
-            
+        message += f"Timeframe: {timeframe}\n"
+        message += f"Strategy: {strategy}\n\n"
+        
+        message += "--------------------\n\n"
+        
+        message += "Risk Management:\n"
+        message += "• Position size: 1-2% max\n"
+        message += "• Use proper stop loss\n"
+        message += "• Follow your trading plan\n\n"
+        
+        message += "--------------------\n\n"
+        
         # Add AI analysis if available
-        if ai_analysis:
-            message += f"\n*AI Analysis:*\n{ai_analysis}\n"
+        if "ai_verdict" in signal_data:
+            message += f"🤖 SigmaPips AI Verdict:\n"
+            message += f"{signal_data['ai_verdict']}\n\n"
             
-        # Add timestamp
-        message += f"\n*Time:* {timestamp}"
+            if "risk_reward_ratio" in signal_data:
+                message += f"Risk/Reward Ratio: {signal_data['risk_reward_ratio']}"
         
         return message
         
@@ -124,57 +129,47 @@ def format_signal_message(signal_data: Dict[str, Any]) -> str:
 
 @app.post("/send-signal")
 async def send_signal(signal_request: SignalRequest) -> dict:
-    """Send a trading signal to Telegram"""
+    """Send a signal to Telegram chat."""
     try:
+        # Create keyboard markup with buttons
+        keyboard = [
+            [
+                InlineKeyboardButton(text="📊 Technical Analysis", callback_data="technical"),
+                InlineKeyboardButton(text="📰 Market Sentiment", callback_data="sentiment")
+            ],
+            [
+                InlineKeyboardButton(text="📅 Economic Calendar", callback_data="calendar")
+            ]
+        ]
+        
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        
         # Format message
         message = format_signal_message(signal_request.signal_data)
         
-        # Escape special characters for MarkdownV2
-        message = escape_markdown(message)
-        
-        # Create keyboard markup
-        keyboard = [
-            [
-                InlineKeyboardButton("", callback_data="technical_analysis"),
-                InlineKeyboardButton("", callback_data="market_sentiment")
-            ],
-            [
-                InlineKeyboardButton("", callback_data="economic_calendar")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        # Send message to all chat IDs
-        sent_messages = []
+        # Send message to each chat ID
         for chat_id in signal_request.chat_ids:
             try:
+                # Remove any whitespace and escape special characters
+                chat_id = chat_id.strip()
+                
                 sent_message = await bot.send_message(
-                    chat_id=chat_id.strip(),  # Remove any whitespace
+                    chat_id=chat_id,
                     text=message,
                     reply_markup=reply_markup,
-                    parse_mode=constants.ParseMode.MARKDOWN_V2
+                    parse_mode=None  # Don't use markdown formatting
                 )
-                sent_messages.append(sent_message)
+                logger.info(f"Message sent to chat {chat_id}")
                 
-                # Store original message
-                messages[str(sent_message.message_id)] = {
-                    "original_text": message,
-                    "text": message,
-                    "symbol": signal_request.signal_data["instrument"],
-                    "timeframe": signal_request.signal_data["timeframe"]
-                }
             except Exception as e:
                 logger.error(f"Error sending to chat {chat_id}: {str(e)}")
                 continue
-        
-        # Save messages to file
-        save_messages(messages)
-        
-        return {"status": "success", "message": f"Signal sent to {len(sent_messages)} chats"}
+                
+        return {"status": "success", "message": "Signal sent successfully"}
         
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error sending signal: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/send-calendar")
 async def send_calendar(calendar_request: CalendarRequest):
@@ -224,7 +219,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     try:
-        if query.data == "technical_analysis":
+        if query.data == "technical":
             try:
                 # Immediately acknowledge the button press
                 await query.answer()
@@ -303,7 +298,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
 
-        elif query.data == "market_sentiment":
+        elif query.data == "sentiment":
             try:
                 # Immediately acknowledge the button press
                 await query.answer()
@@ -418,7 +413,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except:
                     pass
                     
-        elif query.data == "economic_calendar":
+        elif query.data == "calendar":
             try:
                 # Get calendar data from the calendar service
                 async with httpx.AsyncClient() as client:
@@ -454,11 +449,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Create new message with original content
                 keyboard = [
                     [
-                        InlineKeyboardButton("", callback_data="technical_analysis"),
-                        InlineKeyboardButton("", callback_data="market_sentiment")
+                        InlineKeyboardButton("", callback_data="technical"),
+                        InlineKeyboardButton("", callback_data="sentiment")
                     ],
                     [
-                        InlineKeyboardButton("", callback_data="economic_calendar")
+                        InlineKeyboardButton("", callback_data="calendar")
                     ]
                 ]
                 
