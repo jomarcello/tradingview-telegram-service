@@ -128,42 +128,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
                         response = await client.get(
-                            chart_service_url,
-                            params={
-                                "symbol": message_data["symbol"],
-                                "interval": "15m"
-                            }
+                            f"{chart_service_url}?symbol={message_data['symbol']}&interval={message_data['timeframe']}"
                         )
+                        response.raise_for_status()
                         
-                        if response.status_code != 200:
-                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                            await query.edit_message_text(
-                                text="❌ Failed to get chart",
-                                parse_mode='Markdown',
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            return
-                        
-                        chart_data = response.json()
-                        if not chart_data.get("image"):
-                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                            await query.edit_message_text(
-                                text="❌ No chart available",
-                                parse_mode='Markdown',
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            return
-
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Create image data from base64
-                        image_data = base64.b64decode(chart_data["image"])
-                        
-                        # Send the chart image using bot from query
+                        # Send the chart image directly from response content
                         await query.get_bot().send_photo(
                             chat_id=query.message.chat_id,
-                            photo=image_data,
+                            photo=response.content,
                             caption=f"📊 Technical Analysis for {message_data['symbol']}",
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
