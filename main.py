@@ -14,7 +14,15 @@ import traceback
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Log to console
+        logging.handlers.RotatingFileHandler(
+            '/tmp/telegram_service.log',  # Use /tmp for Railway
+            maxBytes=10485760,  # 10MB
+            backupCount=5
+        )
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -321,7 +329,7 @@ async def telegram_webhook(request: Request):
 async def get_logs():
     """Get the last 100 lines of logs"""
     try:
-        with open("telegram_service.log", "r") as f:
+        with open("/tmp/telegram_service.log", "r") as f:
             logs = f.readlines()[-100:]  # Get last 100 lines
             return {"logs": "".join(logs)}
     except Exception as e:
