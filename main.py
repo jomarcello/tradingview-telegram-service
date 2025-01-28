@@ -485,21 +485,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in button handler: {str(e)}")
         logger.error(f"Full traceback: {traceback.format_exc()}")
 
-@app.post("/webhook")
+@app.on_event("startup")
+async def startup():
+    """Set webhook on startup"""
+    try:
+        # Delete any existing webhook and stop polling
+        await bot.delete_webhook(drop_pending_updates=True)
+        
+        # Start the bot in webhook mode
+        webhook_url = "https://tradingview-telegram-service-production.up.railway.app/telegram-webhook"
+        await bot.set_webhook(url=webhook_url)
+        
+        logger.info("Telegram bot webhook set successfully")
+    except Exception as e:
+        logger.error(f"Error starting Telegram bot: {str(e)}")
+        raise
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Stop the bot when shutting down"""
+    try:
+        await bot.delete_webhook()
+        await application.stop()
+        logger.info("Telegram bot stopped successfully")
+    except Exception as e:
+        logger.error(f"Error stopping Telegram bot: {str(e)}")
+
+@app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
     """Handle Telegram webhook updates"""
     try:
         data = await request.json()
         update = Update.de_json(data, bot)
-        
-        if update.callback_query:
-            await button_handler(update, None)
-            
-        return {"status": "success"}
-        
+        await application.process_update(update)
+        return {"status": "ok"}
     except Exception as e:
-        logger.error(f"Error in webhook: {str(e)}")
-        return {"status": "error", "detail": str(e)}
+        logger.error(f"Error processing webhook update: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/logs")
 async def get_logs():
@@ -511,33 +533,6 @@ async def get_logs():
     except Exception as e:
         logger.error(f"Error reading logs: {str(e)}")
         return {"logs": f"Error reading logs: {str(e)}"}
-
-@app.on_event("startup")
-async def startup():
-    """Set webhook on startup"""
-    try:
-        # Delete any existing webhook
-        await bot.delete_webhook()
-        
-        # Start the bot in polling mode
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        
-        logger.info("Telegram bot started successfully")
-    except Exception as e:
-        logger.error(f"Error starting Telegram bot: {str(e)}")
-        raise
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Stop the bot when shutting down"""
-    try:
-        await application.stop()
-        await bot.delete_webhook()  # Clean up webhook on shutdown
-        logger.info("Telegram bot stopped successfully")
-    except Exception as e:
-        logger.error(f"Error stopping Telegram bot: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
