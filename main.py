@@ -10,6 +10,7 @@ from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, In
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 import traceback
+import uuid
 
 # Setup logging
 logging.basicConfig(
@@ -68,8 +69,7 @@ class SignalRequest(BaseModel):
 
 class CalendarRequest(BaseModel):
     message: str
-    parse_mode: str
-    chat_id: str
+    chat_id: Optional[str] = None
 
 def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format the signal message"""
@@ -145,48 +145,60 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"Error sending signal: {str(e)}")
 
 @app.post("/send-calendar")
-async def send_calendar(calendar_request: CalendarRequest) -> dict:
-    """Send an economic calendar message to Telegram"""
+async def send_calendar(calendar_request: CalendarRequest):
+    """Send an economic calendar message to Telegram."""
     try:
-        logger.info(f"Sending calendar message to chat {calendar_request.chat_id}")
-        
-        # Convert chat_id string to integer
-        chat_id = int(calendar_request.chat_id)
-        
-        # Send message
-        message = await bot.send_message(
-            chat_id=chat_id,
-            text=calendar_request.message,
-            parse_mode=calendar_request.parse_mode
-        )
-        
-        logger.info(f"Successfully sent calendar message {message.message_id}")
-        return {"status": "success", "message_id": message.message_id}
-        
+        # Get chat IDs from Supabase if not provided
+        if not calendar_request.chat_id:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://utigkgjcyqnrhpndzqhs.supabase.co/rest/v1/subscribers",
+                    headers={
+                        'apikey': os.getenv("SUPABASE_KEY"),
+                        'Authorization': f'Bearer {os.getenv("SUPABASE_KEY")}'
+                    }
+                )
+                subscribers = response.json()
+                chat_ids = [sub['chat_id'] for sub in subscribers]
+        else:
+            chat_ids = [calendar_request.chat_id]
+
+        # Store message for later retrieval
+        message_id = str(uuid.uuid4())
+        messages[message_id] = {
+            'type': 'calendar',
+            'content': calendar_request.message
+        }
+        save_messages(messages)
+
+        # Send to all chat IDs
+        for chat_id in chat_ids:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=calendar_request.message,
+                parse_mode=ParseMode.HTML
+            )
+
+        return {"status": "success", "message": "Calendar sent successfully"}
+
     except Exception as e:
-        error_msg = f"Error sending calendar: {str(e)}"
-        logger.error(error_msg)
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=error_msg)
+        logger.error(f"Error sending calendar: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle button presses"""
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button presses."""
+    query = update.callback_query
+    await query.answer()
+
     try:
-        query = update.callback_query
-        chat_id = query.message.chat.id
-        message_id = str(query.message.message_id)
-
-        # Load latest messages
-        global messages
-        messages = load_messages()
-
         if query.data == "technical_analysis":
             try:
                 # Immediately acknowledge the button press
                 await query.answer()
                 
                 # Get symbol from stored message
-                message_data = messages.get(message_id)
+                message_data = messages.get(str(query.message.message_id))
                 if not message_data:
                     logger.error("No message data found")
                     await query.edit_message_text("❌ Message expired. Please request a new signal.")
@@ -265,7 +277,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await query.answer()
                 
                 # Get symbol from stored message
-                message_data = messages.get(message_id)
+                message_data = messages.get(str(query.message.message_id))
                 if not message_data:
                     logger.error("No message data found")
                     await query.edit_message_text("❌ Message expired. Please request a new signal.")
@@ -376,95 +388,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     
         elif query.data == "economic_calendar":
             try:
-                # Immediately acknowledge the button press
-                await query.answer()
-                
-                # Get symbol from stored message
-                message_data = messages.get(message_id)
-                if not message_data:
-                    logger.error("No message data found")
-                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
-                    return
-
-                logger.info("Getting economic calendar data")
-                
-                # Update the current message to show loading
-                await query.edit_message_text(
-                    text="🔄 Loading economic calendar...",
-                    parse_mode='Markdown'
-                )
-                
-                # Get calendar data from economic calendar service
-                calendar_service_url = "https://tradingview-economic-calendar-se-production.up.railway.app/calendar"
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    try:
-                        response = await client.get(calendar_service_url)
-                        response.raise_for_status()
-                        data = response.json()
-                        
-                        if not data.get("events"):
-                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                            await query.edit_message_text(
-                                text="❌ No economic events found",
-                                parse_mode='Markdown',
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            return
-                        
-                        # Format the calendar data
-                        calendar_text = "📅 *Economic Calendar*\n\n"
-                        calendar_text += "\n".join(data["events"])
-                        
-                        # Create keyboard with Back button
-                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                        
-                        # Send as new message and store reference
-                        calendar_message = await query.get_bot().send_message(
-                            chat_id=query.message.chat_id,
-                            text=calendar_text,
-                            parse_mode='Markdown',
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-                        
-                        # Store reference to calendar message
-                        messages[str(calendar_message.message_id)] = {
-                            "original_text": message_data["original_text"],
-                            "text": message_data["text"],
-                            "symbol": message_data["symbol"],
-                            "timeframe": message_data["timeframe"],
-                            "is_calendar": True
-                        }
-                        save_messages(messages)
-                        
-                        # Delete the original message
-                        await query.message.delete()
-                        
-                    except Exception as e:
-                        logger.error(f"Error getting calendar: {str(e)}")
-                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                # Get calendar data from the calendar service
+                async with httpx.AsyncClient() as client:
+                    response = await client.get("https://tradingview-calendar-service-production.up.railway.app/calendar")
+                    if response.status_code == 200:
+                        calendar_data = response.json()
                         await query.edit_message_text(
-                            text="❌ Failed to get economic calendar data",
-                            parse_mode='Markdown',
-                            reply_markup=InlineKeyboardMarkup(keyboard)
+                            text=calendar_data["data"],
+                            parse_mode=ParseMode.HTML
                         )
-
+                    else:
+                        await query.edit_message_text(
+                            text="❌ Error fetching calendar data. Please try again later.",
+                            parse_mode=ParseMode.HTML
+                        )
             except Exception as e:
                 logger.error(f"Error in economic calendar handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
-                try:
-                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
-                    await query.edit_message_text(
-                        text="❌ An error occurred",
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                except:
-                    pass
+                await query.edit_message_text(
+                    text="❌ An error occurred. Please try again later.",
+                    parse_mode=ParseMode.HTML
+                )
 
         elif query.data == "back_to_signal":
             try:
                 # Get original message data
-                message_data = messages.get(message_id)
+                message_data = messages.get(str(query.message.message_id))
                 if not message_data:
                     logger.error("No message data found")
                     await query.edit_message_text("❌ Message expired. Please request a new signal.")
