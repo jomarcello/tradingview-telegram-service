@@ -159,6 +159,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                 logger.info(f"Getting chart for symbol: {message_data['symbol']}")
                 
+                # Update the current message to show loading
+                await query.edit_message_text(
+                    text="🔄 Generating technical analysis chart...",
+                    parse_mode='Markdown'
+                )
+                
                 # Get chart from chart service
                 chart_service_url = "https://tradingview-chart-service-production.up.railway.app/chart"
                 async with httpx.AsyncClient(timeout=60.0) as client:
@@ -231,6 +237,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     return
 
                 logger.info(f"Getting news for symbol: {message_data['symbol']}")
+                
+                # Update the current message to show loading
+                await query.edit_message_text(
+                    text="🔄 Analyzing market sentiment...",
+                    parse_mode='Markdown'
+                )
                 
                 # Get news from signal processor
                 signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
