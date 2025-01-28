@@ -225,11 +225,18 @@ async def show_loading_message(message: Message, action: str) -> Message:
     loading_text = f"⏳ Loading {action}... Please wait"
     return await message.reply_text(loading_text)
 
-@app.on_callback_query()
-async def handle_callback(query: CallbackQuery):
-    """Handle callback queries from inline buttons."""
-    await query.answer()
+# Create application and add handlers
+application = (
+    Application.builder()
+    .token(BOT_TOKEN)
+    .build()
+)
 
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle callback queries from inline buttons."""
+    query = update.callback_query
+    await query.answer()
+    
     try:
         original_message = query.message
         loading_message = None
@@ -330,12 +337,7 @@ async def handle_callback(query: CallbackQuery):
         logger.error(f"Error handling callback: {str(e)}")
         await query.message.reply_text("❌ An error occurred. Please try again later.")
 
-# Create application and add handlers
-application = (
-    Application.builder()
-    .token(BOT_TOKEN)
-    .build()
-)
+# Add callback handler
 application.add_handler(CallbackQueryHandler(handle_callback))
 
 @app.post("/telegram-webhook")
