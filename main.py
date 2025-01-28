@@ -365,7 +365,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 
                 # Get calendar data from economic calendar service
-                calendar_service_url = "https://tradingview-economic-calendar-service-production.up.railway.app/calendar"
+                calendar_service_url = "https://tradingview-economic-calendar-se-production.up.railway.app/calendar"
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
                         response = await client.get(calendar_service_url)
