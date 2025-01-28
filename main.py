@@ -73,37 +73,6 @@ class CalendarRequest(BaseModel):
     message: str
     chat_id: Optional[str] = None
 
-def format_signal_message(signal_data: Dict[str, Any]) -> str:
-    """Format the signal message"""
-    direction = "BUY " if signal_data["direction"].upper() == "BUY" else "SELL "
-    
-    message = f""" New Trading Signal 
-
-Instrument: {signal_data['instrument']}
-Action: {direction}
-
-Entry Price: {signal_data['entry_price']}
-Stop Loss: {signal_data['stop_loss']} 
-Take Profit: {signal_data['take_profit']} 
-
-Timeframe: {signal_data['timeframe']}
-Strategy: {signal_data['strategy']}
-
---------------------
-
-Risk Management:
-• Position size: 1\-2% max
-• Use proper stop loss
-• Follow your trading plan
-
---------------------
-
- SigmaPips AI Verdict:
-{signal_data.get('ai_verdict', 'AI analysis not available')}
-
-Risk/Reward Ratio: {signal_data.get('risk_reward_ratio', 'Not available')}"""
-    return message
-
 def escape_markdown(text: str) -> str:
     """Escape special characters for MarkdownV2."""
     special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
@@ -111,12 +80,57 @@ def escape_markdown(text: str) -> str:
         text = text.replace(char, f'\\{char}')
     return text
 
+def format_signal_message(signal_data: Dict[str, Any]) -> str:
+    """Format signal data into a Telegram message."""
+    try:
+        # Get required fields
+        instrument = signal_data.get("instrument", "Unknown")
+        direction = signal_data.get("direction", "Unknown")
+        entry_price = signal_data.get("entry_price", "0.0")
+        stop_loss = signal_data.get("stop_loss", "0.0")
+        take_profit = signal_data.get("take_profit", "0.0")
+        timeframe = signal_data.get("timeframe", "Unknown")
+        strategy = signal_data.get("strategy", "Unknown")
+        timestamp = signal_data.get("timestamp", "Unknown")
+        
+        # Get optional fields
+        news_sentiment = signal_data.get("news_sentiment", None)
+        ai_analysis = signal_data.get("ai_analysis", None)
+        
+        # Format base message
+        message = f"*{instrument} {direction} Signal*\n\n"
+        message += f"*Strategy:* {strategy}\n"
+        message += f"*Timeframe:* {timeframe}\n"
+        message += f"*Entry Price:* {entry_price}\n"
+        message += f"*Stop Loss:* {stop_loss}\n"
+        message += f"*Take Profit:* {take_profit}\n"
+        
+        # Add news sentiment if available
+        if news_sentiment:
+            message += f"\n*News Sentiment:*\n{news_sentiment}\n"
+            
+        # Add AI analysis if available
+        if ai_analysis:
+            message += f"\n*AI Analysis:*\n{ai_analysis}\n"
+            
+        # Add timestamp
+        message += f"\n*Time:* {timestamp}"
+        
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error formatting message: {str(e)}")
+        return "Error formatting signal message"
+
 @app.post("/send-signal")
 async def send_signal(signal_request: SignalRequest) -> dict:
     """Send a trading signal to Telegram"""
     try:
         # Format message
         message = format_signal_message(signal_request.signal_data)
+        
+        # Escape special characters for MarkdownV2
+        message = escape_markdown(message)
         
         # Create keyboard markup
         keyboard = [
@@ -135,7 +149,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         for chat_id in signal_request.chat_ids:
             try:
                 sent_message = await bot.send_message(
-                    chat_id=chat_id,
+                    chat_id=chat_id.strip(),  # Remove any whitespace
                     text=message,
                     reply_markup=reply_markup,
                     parse_mode=constants.ParseMode.MARKDOWN_V2
