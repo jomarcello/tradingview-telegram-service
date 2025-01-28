@@ -33,6 +33,9 @@ app = FastAPI()
 BOT_TOKEN = "7583525993:AAFp90r7UqCY2KdGufKgHHjjslBy7AnY_Sg"
 bot = Bot(BOT_TOKEN)
 
+# Create application
+application = Application.builder().token(BOT_TOKEN).build()
+
 # Store original messages
 MESSAGES_FILE = '/tmp/messages.json'
 
@@ -506,12 +509,24 @@ async def get_logs():
 async def startup():
     """Set webhook on startup"""
     try:
-        webhook_url = "https://tradingview-telegram-service-production.up.railway.app/webhook"
-        await bot.set_webhook(webhook_url)
-        logger.info(f"Webhook set to {webhook_url}")
+        # Start the bot in polling mode
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        logger.info("Telegram bot started successfully")
     except Exception as e:
-        logger.error(f"Error setting webhook: {str(e)}")
+        logger.error(f"Error starting Telegram bot: {str(e)}")
         raise
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Stop the bot when shutting down"""
+    try:
+        await application.stop()
+        logger.info("Telegram bot stopped successfully")
+    except Exception as e:
+        logger.error(f"Error stopping Telegram bot: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
