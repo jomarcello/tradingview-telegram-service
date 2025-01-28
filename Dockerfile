@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.9-slim
 
 WORKDIR /app
 
@@ -6,6 +6,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
+
+# Create and set permissions for /tmp directory
+RUN mkdir -p /tmp && \
+    chmod 777 /tmp
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .

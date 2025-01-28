@@ -42,6 +42,9 @@ def load_messages() -> Dict:
         if os.path.exists(MESSAGES_FILE):
             with open(MESSAGES_FILE, 'r') as f:
                 return json.load(f)
+        else:
+            # Create empty file if it doesn't exist
+            save_messages({})
     except Exception as e:
         logger.error(f"Error loading messages: {str(e)}")
     return {}
@@ -49,10 +52,13 @@ def load_messages() -> Dict:
 def save_messages(messages: Dict) -> None:
     """Save messages to file"""
     try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(MESSAGES_FILE), exist_ok=True)
         with open(MESSAGES_FILE, 'w') as f:
             json.dump(messages, f)
     except Exception as e:
         logger.error(f"Error saving messages: {str(e)}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
 
 messages = load_messages()
 
