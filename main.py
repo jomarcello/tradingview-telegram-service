@@ -6,8 +6,7 @@ import base64
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.constants import ParseMode
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, constants
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 import traceback
 import uuid
@@ -127,7 +126,7 @@ async def send_signal(signal_request: SignalRequest) -> dict:
                     chat_id=chat_id,
                     text=message,
                     reply_markup=reply_markup,
-                    parse_mode=ParseMode.MARKDOWN
+                    parse_mode=constants.ParseMode.MARKDOWN_V2
                 )
                 sent_messages.append(sent_message)
                 
@@ -183,7 +182,7 @@ async def send_calendar(calendar_request: CalendarRequest):
             await bot.send_message(
                 chat_id=chat_id,
                 text=calendar_request.message,
-                parse_mode=ParseMode.HTML
+                parse_mode=constants.ParseMode.HTML
             )
 
         return {"status": "success", "message": "Calendar sent successfully"}
@@ -402,19 +401,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         calendar_data = response.json()
                         await query.edit_message_text(
                             text=calendar_data["data"],
-                            parse_mode=ParseMode.HTML
+                            parse_mode=constants.ParseMode.HTML
                         )
                     else:
                         await query.edit_message_text(
                             text="❌ Error fetching calendar data. Please try again later.",
-                            parse_mode=ParseMode.HTML
+                            parse_mode=constants.ParseMode.HTML
                         )
             except Exception as e:
                 logger.error(f"Error in economic calendar handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 await query.edit_message_text(
                     text="❌ An error occurred. Please try again later.",
-                    parse_mode=ParseMode.HTML
+                    parse_mode=constants.ParseMode.HTML
                 )
 
         elif query.data == "back_to_signal":
