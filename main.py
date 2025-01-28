@@ -159,12 +159,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                 logger.info(f"Getting chart for symbol: {message_data['symbol']}")
                 
-                # Update the current message to show loading
-                await query.edit_message_text(
-                    text="🔄 Generating technical analysis chart...",
-                    parse_mode='Markdown'
-                )
-                
                 # Get chart from chart service
                 chart_service_url = "https://tradingview-chart-service-production.up.railway.app/chart"
                 async with httpx.AsyncClient(timeout=60.0) as client:
@@ -210,6 +204,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
+
             except Exception as e:
                 logger.error(f"Error in technical analysis handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
@@ -236,12 +231,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     return
 
                 logger.info(f"Getting news for symbol: {message_data['symbol']}")
-                
-                # Update the current message to show loading
-                await query.edit_message_text(
-                    text="🔄 Analyzing market sentiment...",
-                    parse_mode='Markdown'
-                )
                 
                 # Get news from signal processor
                 signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
@@ -295,12 +284,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         # Create keyboard with Back button
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         
-                        # Show only the analysis on this "page"
-                        await query.edit_message_text(
+                        # Send as new message and store reference
+                        sentiment_message = await query.get_bot().send_message(
+                            chat_id=query.message.chat_id,
                             text=data["analysis"],
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
+                        
+                        # Store reference to sentiment message
+                        messages[str(sentiment_message.message_id)] = {
+                            "original_text": message_data["original_text"],
+                            "text": message_data["text"],
+                            "symbol": message_data["symbol"],
+                            "timeframe": message_data["timeframe"],
+                            "is_sentiment": True
+                        }
+                        save_messages(messages)
+                        
+                        # Delete the original message
+                        await query.message.delete()
                         
                     except Exception as e:
                         logger.error(f"Error getting sentiment: {str(e)}")
