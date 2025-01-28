@@ -26,20 +26,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI()
-
 # Initialize Telegram bot
 BOT_TOKEN = "7583525993:AAFp90r7UqCY2KdGufKgHHjjslBy7AnY_Sg"
 bot = Bot(BOT_TOKEN)
-
-# Create application and add handlers
-application = (
-    Application.builder()
-    .token(BOT_TOKEN)
-    .build()
-)
-application.add_handler(CallbackQueryHandler(handle_callback))
 
 # Store original messages
 MESSAGES_FILE = '/tmp/messages.json'
@@ -337,6 +326,17 @@ async def handle_callback(query: CallbackQuery):
     except Exception as e:
         logger.error(f"Error handling callback: {str(e)}")
         await query.message.reply_text("❌ An error occurred. Please try again later.")
+
+# Initialize FastAPI app
+app = FastAPI()
+
+# Create application and add handlers
+application = (
+    Application.builder()
+    .token(BOT_TOKEN)
+    .build()
+)
+application.add_handler(CallbackQueryHandler(handle_callback))
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
