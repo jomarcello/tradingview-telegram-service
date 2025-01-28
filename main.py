@@ -150,11 +150,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         logger.error(f"Error getting chart: {str(e)}")
                         keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
                         await query.edit_message_text(
-                            text="❌ An error occurred",
+                            text=f"❌ Failed to get chart: {str(e)}",
                             parse_mode='Markdown',
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
-
             except Exception as e:
                 logger.error(f"Error in technical analysis handler: {str(e)}")
                 logger.error(f"Full traceback: {traceback.format_exc()}")
