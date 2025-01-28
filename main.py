@@ -103,10 +103,15 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         message = format_signal_message(signal_request.signal_data)
         
         # Create keyboard markup
-        keyboard = [[
-            InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
-            InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
-        ]]
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
+                InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
+            ],
+            [
+                InlineKeyboardButton("📅 Economic Calendar", callback_data="economic_calendar")
+            ]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Send message
@@ -339,6 +344,93 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 except:
                     pass
                     
+        elif query.data == "economic_calendar":
+            try:
+                # Immediately acknowledge the button press
+                await query.answer()
+                
+                # Get symbol from stored message
+                message_data = messages.get(message_id)
+                if not message_data:
+                    logger.error("No message data found")
+                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
+                    return
+
+                logger.info("Getting economic calendar data")
+                
+                # Update the current message to show loading
+                await query.edit_message_text(
+                    text="🔄 Loading economic calendar...",
+                    parse_mode='Markdown'
+                )
+                
+                # Get calendar data from economic calendar service
+                calendar_service_url = "https://tradingview-economic-calendar-service-production.up.railway.app/calendar"
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    try:
+                        response = await client.get(calendar_service_url)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        if not data.get("events"):
+                            keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                            await query.edit_message_text(
+                                text="❌ No economic events found",
+                                parse_mode='Markdown',
+                                reply_markup=InlineKeyboardMarkup(keyboard)
+                            )
+                            return
+                        
+                        # Format the calendar data
+                        calendar_text = "📅 *Economic Calendar*\n\n"
+                        calendar_text += "\n".join(data["events"])
+                        
+                        # Create keyboard with Back button
+                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        
+                        # Send as new message and store reference
+                        calendar_message = await query.get_bot().send_message(
+                            chat_id=query.message.chat_id,
+                            text=calendar_text,
+                            parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                        
+                        # Store reference to calendar message
+                        messages[str(calendar_message.message_id)] = {
+                            "original_text": message_data["original_text"],
+                            "text": message_data["text"],
+                            "symbol": message_data["symbol"],
+                            "timeframe": message_data["timeframe"],
+                            "is_calendar": True
+                        }
+                        save_messages(messages)
+                        
+                        # Delete the original message
+                        await query.message.delete()
+                        
+                    except Exception as e:
+                        logger.error(f"Error getting calendar: {str(e)}")
+                        keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                        await query.edit_message_text(
+                            text="❌ Failed to get economic calendar data",
+                            parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+
+            except Exception as e:
+                logger.error(f"Error in economic calendar handler: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                try:
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    await query.edit_message_text(
+                        text="❌ An error occurred",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                except:
+                    pass
+
         elif query.data == "back_to_signal":
             try:
                 # Get original message data
@@ -353,6 +445,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     [
                         InlineKeyboardButton("📊 Technical Analysis", callback_data="technical_analysis"),
                         InlineKeyboardButton("📰 Market Sentiment", callback_data="market_sentiment")
+                    ],
+                    [
+                        InlineKeyboardButton("📅 Economic Calendar", callback_data="economic_calendar")
                     ]
                 ]
                 
