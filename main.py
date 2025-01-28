@@ -34,7 +34,27 @@ BOT_TOKEN = "7583525993:AAFp90r7UqCY2KdGufKgHHjjslBy7AnY_Sg"
 bot = Bot(BOT_TOKEN)
 
 # Store original messages
-messages = {}
+MESSAGES_FILE = '/tmp/messages.json'
+
+def load_messages() -> Dict:
+    """Load messages from file"""
+    try:
+        if os.path.exists(MESSAGES_FILE):
+            with open(MESSAGES_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading messages: {str(e)}")
+    return {}
+
+def save_messages(messages: Dict) -> None:
+    """Save messages to file"""
+    try:
+        with open(MESSAGES_FILE, 'w') as f:
+            json.dump(messages, f)
+    except Exception as e:
+        logger.error(f"Error saving messages: {str(e)}")
+
+messages = load_messages()
 
 class SignalRequest(BaseModel):
     signal_data: Dict[str, Any]
@@ -95,8 +115,12 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         messages[str(sent_message.message_id)] = {
             "original_text": message,
             "text": message,
-            "symbol": signal_request.signal_data["instrument"]
+            "symbol": signal_request.signal_data["instrument"],
+            "timeframe": signal_request.signal_data["timeframe"]
         }
+        
+        # Save messages to file
+        save_messages(messages)
         
         return {"status": "success", "message": "Signal sent successfully"}
         
@@ -111,6 +135,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         chat_id = query.message.chat.id
         message_id = str(query.message.message_id)
 
+        # Load latest messages
+        global messages
+        messages = load_messages()
+
         if query.data == "technical_analysis":
             try:
                 # Immediately acknowledge the button press
@@ -120,7 +148,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 message_data = messages.get(message_id)
                 if not message_data:
                     logger.error("No message data found")
-                    await query.edit_message_text("Message data not found")
+                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
                     return
 
                 logger.info(f"Getting chart for symbol: {message_data['symbol']}")
@@ -188,7 +216,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 message_data = messages.get(message_id)
                 if not message_data:
                     logger.error("No message data found")
-                    await query.edit_message_text("Message data not found")
+                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
                     return
 
                 logger.info(f"Getting news for symbol: {message_data['symbol']}")
@@ -286,7 +314,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 message_data = messages.get(message_id)
                 if not message_data:
                     logger.error("No message data found")
-                    await query.answer("Message data not found")
+                    await query.edit_message_text("❌ Message expired. Please request a new signal.")
                     return
                     
                 # Restore original keyboard
@@ -299,19 +327,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 
                 # Restore original message
                 await query.edit_message_text(
-                    text=message_data["text"],
+                    text=message_data["original_text"],
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
-                await query.answer()
                 
             except Exception as e:
-                logger.error(f"Error in back_to_signal handler: {str(e)}")
-                await query.answer("An error occurred")
-                
+                logger.error(f"Error in back to signal handler: {str(e)}")
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                try:
+                    await query.edit_message_text(
+                        text="❌ An error occurred",
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
+
+        await query.answer()
+        
     except Exception as e:
         logger.error(f"Error in button handler: {str(e)}")
-        await query.answer("An error occurred")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
