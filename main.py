@@ -6,7 +6,7 @@ import base64
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, constants
+from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, constants, Message
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 import traceback
 import uuid
@@ -213,286 +213,115 @@ async def send_calendar(calendar_request: CalendarRequest):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button presses."""
-    query = update.callback_query
+async def show_loading_message(message: Message, action: str) -> Message:
+    """Show a loading message while processing."""
+    loading_text = f"⏳ Loading {action}... Please wait"
+    return await message.reply_text(loading_text)
+
+@app.on_callback_query()
+async def handle_callback(query: CallbackQuery):
+    """Handle callback queries from inline buttons."""
     await query.answer()
 
     try:
+        original_message = query.message
+        loading_message = None
+
         if query.data == "technical":
             try:
-                # Immediately acknowledge the button press
-                await query.answer()
-                
-                # Get symbol from stored message
-                message_data = messages.get(str(query.message.message_id))
-                if not message_data:
-                    logger.error("No message data found")
-                    await query.edit_message_text(" Message expired. Please request a new signal.")
-                    return
-
-                logger.info(f"Getting chart for symbol: {message_data['symbol']}")
-                
-                # Update the current message to show loading
-                await query.edit_message_text(
-                    text=" Generating technical analysis chart...",
-                    parse_mode='Markdown'
-                )
+                # Show loading message
+                loading_message = await show_loading_message(original_message, "Technical Analysis")
                 
                 # Get chart from chart service
-                chart_service_url = "https://tradingview-chart-service-production.up.railway.app/chart"
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    try:
-                        # Get timeframe from message data
-                        timeframe = message_data.get('timeframe', '15m')
-                        
-                        # Get chart
-                        response = await client.get(
-                            f"{chart_service_url}?symbol={message_data['symbol']}&interval={timeframe}"
-                        )
-                        response.raise_for_status()
-                        
-                        # Create keyboard with Back button
-                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                        
-                        # Send as new message and store reference
-                        chart_message = await query.get_bot().send_photo(
-                            chat_id=query.message.chat_id,
-                            photo=response.content,
-                            caption=f" Technical Analysis for {message_data['symbol']}",
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-                        
-                        # Store reference to chart message
-                        messages[str(chart_message.message_id)] = {
-                            "original_text": message_data["original_text"],
-                            "text": message_data["text"],
-                            "symbol": message_data["symbol"],
-                            "timeframe": message_data["timeframe"],
-                            "is_chart": True
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(
+                        f"https://tradingview-chart-service-production.up.railway.app/chart",
+                        params={
+                            "symbol": "EURUSD",  # Get this from stored message data
+                            "interval": "15m",
+                            "theme": "dark"
                         }
-                        save_messages(messages)
-                        
-                        # Delete the original message
-                        await query.message.delete()
-                        
-                    except Exception as e:
-                        logger.error(f"Error getting chart: {str(e)}")
-                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                        await query.edit_message_text(
-                            text=f" Failed to get chart: {str(e)}",
-                            parse_mode='Markdown',
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-
-            except Exception as e:
-                logger.error(f"Error in technical analysis handler: {str(e)}")
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                try:
-                    keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                    await query.edit_message_text(
-                        text=" An error occurred",
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
                     )
-                except:
-                    pass
+                    response.raise_for_status()
+                    
+                    # Send chart as photo
+                    await bot.send_photo(
+                        chat_id=original_message.chat.id,
+                        photo=response.content,
+                        caption="📊 Technical Analysis Chart"
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Error getting technical analysis: {str(e)}")
+                await original_message.reply_text("❌ Error loading technical analysis. Please try again later.")
+            finally:
+                if loading_message:
+                    await loading_message.delete()
 
         elif query.data == "sentiment":
             try:
-                # Immediately acknowledge the button press
-                await query.answer()
+                # Show loading message
+                loading_message = await show_loading_message(original_message, "Market Sentiment")
                 
-                # Get symbol from stored message
-                message_data = messages.get(str(query.message.message_id))
-                if not message_data:
-                    logger.error("No message data found")
-                    await query.edit_message_text(" Message expired. Please request a new signal.")
-                    return
-
-                logger.info(f"Getting news for symbol: {message_data['symbol']}")
-                
-                # Update the current message to show loading
-                await query.edit_message_text(
-                    text=" Analyzing market sentiment...",
-                    parse_mode='Markdown'
-                )
-                
-                # Get news from signal processor
-                signal_processor_url = "https://tradingview-signal-processor-production.up.railway.app/get-news"
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    try:
-                        response = await client.get(
-                            signal_processor_url,
-                            params={"instrument": message_data["symbol"]}
-                        )
-                        
-                        if response.status_code != 200:
-                            keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                            await query.edit_message_text(
-                                text=" Failed to get news",
-                                parse_mode='Markdown',
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            return
-                        
-                        news_data = response.json()
-                        if not news_data.get("articles"):
-                            keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                            await query.edit_message_text(
-                                text=" No news articles found",
-                                parse_mode='Markdown',
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            return
-
-                        # Send news to AI service for analysis
-                        sentiment_url = "https://tradingview-news-ai-service-production.up.railway.app/analyze-news"
-                        response = await client.post(
-                            sentiment_url,
-                            json={
-                                "instrument": message_data["symbol"],
-                                "articles": news_data["articles"]
-                            }
-                        )
-                        
-                        if response.status_code != 200:
-                            keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                            await query.edit_message_text(
-                                text=" Failed to get sentiment",
-                                parse_mode='Markdown',
-                                reply_markup=InlineKeyboardMarkup(keyboard)
-                            )
-                            return
-                        
-                        data = response.json()
-
-                        # Create keyboard with Back button
-                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                        
-                        # Send as new message and store reference
-                        sentiment_message = await query.get_bot().send_message(
-                            chat_id=query.message.chat_id,
-                            text=data["analysis"],
-                            parse_mode='Markdown',
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-                        
-                        # Store reference to sentiment message
-                        messages[str(sentiment_message.message_id)] = {
-                            "original_text": message_data["original_text"],
-                            "text": message_data["text"],
-                            "symbol": message_data["symbol"],
-                            "timeframe": message_data["timeframe"],
-                            "is_sentiment": True
+                # Get sentiment from news AI service
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(
+                        f"https://tradingview-news-ai-service-production.up.railway.app/analyze-news",
+                        params={
+                            "instrument": "EURUSD"  # Get this from stored message data
                         }
-                        save_messages(messages)
-                        
-                        # Delete the original message
-                        await query.message.delete()
-                        
-                    except Exception as e:
-                        logger.error(f"Error getting sentiment: {str(e)}")
-                        keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                        await query.edit_message_text(
-                            text=" An error occurred",
-                            parse_mode='Markdown',
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-
-            except Exception as e:
-                logger.error(f"Error in market sentiment handler: {str(e)}")
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                try:
-                    keyboard = [[InlineKeyboardButton("", callback_data="back_to_signal")]]
-                    await query.edit_message_text(
-                        text=" An error occurred",
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
                     )
-                except:
-                    pass
+                    response.raise_for_status()
+                    sentiment_data = response.json()
                     
+                    # Send sentiment analysis
+                    await original_message.reply_text(
+                        f"📰 Market Sentiment Analysis\n\n{sentiment_data['sentiment']}"
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Error getting market sentiment: {str(e)}")
+                await original_message.reply_text("❌ Error loading market sentiment. Please try again later.")
+            finally:
+                if loading_message:
+                    await loading_message.delete()
+
         elif query.data == "calendar":
             try:
-                # Get calendar data from the calendar service
-                async with httpx.AsyncClient() as client:
-                    response = await client.get("https://tradingview-calendar-service-production.up.railway.app/calendar")
-                    if response.status_code == 200:
-                        calendar_data = response.json()
-                        await query.edit_message_text(
-                            text=calendar_data["data"],
-                            parse_mode=constants.ParseMode.HTML
-                        )
-                    else:
-                        await query.edit_message_text(
-                            text=" Error fetching calendar data. Please try again later.",
-                            parse_mode=constants.ParseMode.HTML
-                        )
-            except Exception as e:
-                logger.error(f"Error in economic calendar handler: {str(e)}")
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                await query.edit_message_text(
-                    text=" An error occurred. Please try again later.",
-                    parse_mode=constants.ParseMode.HTML
-                )
-
-        elif query.data == "back_to_signal":
-            try:
-                # Get original message data
-                message_data = messages.get(str(query.message.message_id))
-                if not message_data:
-                    logger.error("No message data found")
-                    await query.edit_message_text(" Message expired. Please request a new signal.")
-                    return
+                # Show loading message
+                loading_message = await show_loading_message(original_message, "Economic Calendar")
                 
-                # Create new message with original content
-                keyboard = [
-                    [
-                        InlineKeyboardButton("", callback_data="technical"),
-                        InlineKeyboardButton("", callback_data="sentiment")
-                    ],
-                    [
-                        InlineKeyboardButton("", callback_data="calendar")
-                    ]
-                ]
-                
-                # Send new message with original content
-                new_message = await query.get_bot().send_message(
-                    chat_id=query.message.chat_id,
-                    text=message_data["original_text"],
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                
-                # Store new message
-                messages[str(new_message.message_id)] = {
-                    "original_text": message_data["original_text"],
-                    "text": message_data["text"],
-                    "symbol": message_data["symbol"],
-                    "timeframe": message_data["timeframe"]
-                }
-                save_messages(messages)
-                
-                # Delete the current message
-                await query.message.delete()
-                
-            except Exception as e:
-                logger.error(f"Error in back to signal handler: {str(e)}")
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                try:
-                    await query.edit_message_text(
-                        text=" An error occurred",
-                        parse_mode='Markdown'
+                # Get calendar data
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(
+                        f"https://tradingview-calendar-service-production.up.railway.app/calendar",
+                        params={
+                            "instrument": "EURUSD",  # Get this from stored message data
+                            "timeframe": "15m"
+                        }
                     )
-                except:
-                    pass
+                    response.raise_for_status()
+                    calendar_data = response.json()
+                    
+                    # Format and send calendar data
+                    calendar_text = "📅 Economic Calendar\n\n"
+                    for event in calendar_data["events"]:
+                        calendar_text += f"🕒 {event['time']}\n"
+                        calendar_text += f"📊 {event['event']}\n"
+                        calendar_text += f"🎯 Impact: {event['impact']}\n\n"
+                        
+                    await original_message.reply_text(calendar_text)
+                    
+            except Exception as e:
+                logger.error(f"Error getting economic calendar: {str(e)}")
+                await original_message.reply_text("❌ Error loading economic calendar. Please try again later.")
+            finally:
+                if loading_message:
+                    await loading_message.delete()
 
-        await query.answer()
-        
     except Exception as e:
-        logger.error(f"Error in button handler: {str(e)}")
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Error handling callback: {str(e)}")
+        await query.message.reply_text("❌ An error occurred. Please try again later.")
 
 @app.on_event("startup")
 async def startup():
