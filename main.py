@@ -317,6 +317,17 @@ async def telegram_webhook(request: Request):
         logger.error(f"Error in webhook: {str(e)}")
         return {"status": "error", "detail": str(e)}
 
+@app.get("/logs")
+async def get_logs():
+    """Get the last 100 lines of logs"""
+    try:
+        with open("telegram_service.log", "r") as f:
+            logs = f.readlines()[-100:]  # Get last 100 lines
+            return {"logs": "".join(logs)}
+    except Exception as e:
+        logger.error(f"Error reading logs: {str(e)}")
+        return {"logs": f"Error reading logs: {str(e)}"}
+
 @app.on_event("startup")
 async def startup():
     """Set webhook on startup"""
