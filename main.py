@@ -72,31 +72,33 @@ class CalendarRequest(BaseModel):
 
 def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format the signal message"""
-    direction = "BUY 📈" if signal_data["direction"].upper() == "LONG" else "SELL 📉"
+    direction = "BUY 📈" if signal_data["direction"].upper() == "BUY" else "SELL 📉"
     
     message = f"""🎯 New Trading Signal 🎯
 
 Instrument: {signal_data['instrument']}
 Action: {direction}
 
-Entry Price: {signal_data['entry']}
-Stop Loss: {signal_data['sl']} 🛑
-Take Profit: {signal_data['tp']} 🎯
+Entry Price: {signal_data['entry_price']}
+Stop Loss: {signal_data['stop_loss']} 🛑
+Take Profit: {signal_data['take_profit']} 🎯
 
 Timeframe: {signal_data['timeframe']}
-Strategy: Test Strategy
+Strategy: {signal_data['strategy']}
 
 --------------------
 
 Risk Management:
-• Position size: 1-2% max
+• Position size: 1\-2% max
 • Use proper stop loss
 • Follow your trading plan
 
 --------------------
 
 🤖 SigmaPips AI Verdict:
-The {signal_data['instrument']} {direction.split()[0].lower()} signal aligns with a bullish momentum confirmed by short-term indicators, suggesting an upward move. With a tight stop loss and a favorable risk/reward ratio, this setup offers a promising opportunity for disciplined traders."""
+{signal_data.get('ai_verdict', 'AI analysis not available')}
+
+Risk/Reward Ratio: {signal_data.get('risk_reward_ratio', 'Not available')}"""
     return message
 
 @app.post("/send-signal")
