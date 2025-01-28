@@ -1,3 +1,6 @@
+# Initialize FastAPI app
+app = FastAPI()
+
 import os
 import json
 import logging
@@ -326,9 +329,6 @@ async def handle_callback(query: CallbackQuery):
     except Exception as e:
         logger.error(f"Error handling callback: {str(e)}")
         await query.message.reply_text("❌ An error occurred. Please try again later.")
-
-# Initialize FastAPI app
-app = FastAPI()
 
 # Create application and add handlers
 application = (
