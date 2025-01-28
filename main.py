@@ -66,6 +66,11 @@ class SignalRequest(BaseModel):
     signal_data: Dict[str, Any]
     chat_id: str
 
+class CalendarRequest(BaseModel):
+    message: str
+    parse_mode: str
+    chat_id: str
+
 def format_signal_message(signal_data: Dict[str, Any]) -> str:
     """Format the signal message"""
     direction = "BUY 📈" if signal_data["direction"].upper() == "LONG" else "SELL 📉"
@@ -138,6 +143,28 @@ async def send_signal(signal_request: SignalRequest) -> dict:
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error sending signal: {str(e)}")
+
+@app.post("/send-calendar")
+async def send_calendar(calendar_request: CalendarRequest) -> dict:
+    """Send an economic calendar message to Telegram"""
+    try:
+        logger.info(f"Sending calendar message to chat {calendar_request.chat_id}")
+        
+        # Send message
+        message = await bot.send_message(
+            chat_id=calendar_request.chat_id,
+            text=calendar_request.message,
+            parse_mode=calendar_request.parse_mode
+        )
+        
+        logger.info(f"Successfully sent calendar message {message.message_id}")
+        return {"status": "success", "message_id": message.message_id}
+        
+    except Exception as e:
+        error_msg = f"Error sending calendar: {str(e)}"
+        logger.error(error_msg)
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses"""
