@@ -124,7 +124,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 
                 # Get chart from chart service
-                chart_service_url = "https://tradingview-chart-service-production.up.railway.app/screenshot"
+                chart_service_url = "https://tradingview-chart-service-production.up.railway.app/chart"
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
                         response = await client.get(
