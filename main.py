@@ -130,20 +130,20 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         # Create keyboard markup with buttons
         keyboard = [
             [
-                InlineKeyboardButton(text="📊 Technical Analysis", callback_data="technical"),
-                InlineKeyboardButton(text="📰 Market Sentiment", callback_data="sentiment")
+                InlineKeyboardButton("📊 Technical Analysis", callback_data="technical"),
+                InlineKeyboardButton("📰 Market Sentiment", callback_data="sentiment")
             ],
             [
-                InlineKeyboardButton(text="📅 Economic Calendar", callback_data="calendar")
+                InlineKeyboardButton("📅 Economic Calendar", callback_data="calendar")
             ]
         ]
         
-        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
         # Format message
         message = format_signal_message(signal_request.signal_data)
         
-        # Send message to each chat ID
+        # Store signal data for later use
         for chat_id in signal_request.chat_ids:
             try:
                 # Remove any whitespace and escape special characters
@@ -155,6 +155,15 @@ async def send_signal(signal_request: SignalRequest) -> dict:
                     reply_markup=reply_markup,
                     parse_mode=None  # Don't use markdown formatting
                 )
+                
+                # Store the message data for later use by callback handlers
+                messages[str(sent_message.message_id)] = {
+                    "symbol": signal_request.signal_data["instrument"],
+                    "timeframe": signal_request.signal_data.get("timeframe", "15m"),
+                    "original_text": message
+                }
+                save_messages(messages)
+                
                 logger.info(f"Message sent to chat {chat_id}")
                 
             except Exception as e:
