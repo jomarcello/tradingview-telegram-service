@@ -241,6 +241,10 @@ application = (
     .build()
 )
 
+CHART_SERVICE_URL = "https://tradingview-chart-service-production.up.railway.app"
+NEWS_AI_SERVICE_URL = "https://tradingview-news-ai-service-production.up.railway.app"
+CALENDAR_SERVICE_URL = "https://tradingview-calendar-service-production.up.railway.app"
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle callback queries from inline buttons."""
     query = update.callback_query
@@ -249,6 +253,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         original_message = query.message
         loading_message = None
+        
+        # Get stored message data
+        message_data = messages.get(str(original_message.message_id))
+        if not message_data:
+            await original_message.reply_text("❌ Could not find message data. Please try again with a new signal.")
+            return
+            
+        symbol = message_data["symbol"]
+        timeframe = message_data["timeframe"]
 
         if query.data == "technical":
             try:
@@ -258,20 +271,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Get chart from chart service
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.get(
-                        f"https://tradingview-chart-service-production.up.railway.app/chart",
+                        f"{CHART_SERVICE_URL}/chart",
                         params={
-                            "symbol": "EURUSD",  # Get this from stored message data
-                            "interval": "15m",
+                            "symbol": symbol,
+                            "interval": timeframe,
                             "theme": "dark"
                         }
                     )
                     response.raise_for_status()
                     
-                    # Send chart as photo
+                    # Send chart as photo with Back to Signal button
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
                     await bot.send_photo(
                         chat_id=original_message.chat.id,
                         photo=response.content,
-                        caption="📊 Technical Analysis Chart"
+                        caption=f"📊 Technical Analysis Chart for {symbol}",
+                        reply_markup=reply_markup
                     )
                     
             except Exception as e:
@@ -289,17 +306,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Get sentiment from news AI service
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.get(
-                        f"https://tradingview-news-ai-service-production.up.railway.app/analyze-news",
+                        f"{NEWS_AI_SERVICE_URL}/analyze-news",
                         params={
-                            "instrument": "EURUSD"  # Get this from stored message data
+                            "instrument": symbol
                         }
                     )
                     response.raise_for_status()
                     sentiment_data = response.json()
                     
-                    # Send sentiment analysis
+                    # Send sentiment analysis with Back to Signal button
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
                     await original_message.reply_text(
-                        f"📰 Market Sentiment Analysis\n\n{sentiment_data['sentiment']}"
+                        f"📰 Market Sentiment Analysis for {symbol}\n\n{sentiment_data['sentiment']}",
+                        reply_markup=reply_markup
                     )
                     
             except Exception as e:
@@ -317,23 +338,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Get calendar data
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.get(
-                        f"https://tradingview-calendar-service-production.up.railway.app/calendar",
+                        f"{CALENDAR_SERVICE_URL}/calendar",
                         params={
-                            "instrument": "EURUSD",  # Get this from stored message data
-                            "timeframe": "15m"
+                            "instrument": symbol,
+                            "timeframe": timeframe
                         }
                     )
                     response.raise_for_status()
                     calendar_data = response.json()
                     
-                    # Format and send calendar data
-                    calendar_text = "📅 Economic Calendar\n\n"
+                    # Format and send calendar data with Back to Signal button
+                    keyboard = [[InlineKeyboardButton("« Back to Signal", callback_data="back_to_signal")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    calendar_text = f"📅 Economic Calendar for {symbol}\n\n"
                     for event in calendar_data["events"]:
                         calendar_text += f"🕒 {event['time']}\n"
                         calendar_text += f"📊 {event['event']}\n"
                         calendar_text += f"🎯 Impact: {event['impact']}\n\n"
                         
-                    await original_message.reply_text(calendar_text)
+                    await original_message.reply_text(calendar_text, reply_markup=reply_markup)
                     
             except Exception as e:
                 logger.error(f"Error getting economic calendar: {str(e)}")
@@ -341,6 +365,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             finally:
                 if loading_message:
                     await loading_message.delete()
+                    
+        elif query.data == "back_to_signal":
+            try:
+                # Get original message text
+                original_text = message_data["original_text"]
+                
+                # Create original keyboard markup
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📊 Technical Analysis", callback_data="technical"),
+                        InlineKeyboardButton("📰 Market Sentiment", callback_data="sentiment")
+                    ],
+                    [
+                        InlineKeyboardButton("📅 Economic Calendar", callback_data="calendar")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                # Edit message to show original signal
+                await original_message.edit_text(
+                    text=original_text,
+                    reply_markup=reply_markup,
+                    parse_mode=None
+                )
+                
+            except Exception as e:
+                logger.error(f"Error going back to signal: {str(e)}")
+                await original_message.reply_text("❌ Error returning to signal. Please try again later.")
 
     except Exception as e:
         logger.error(f"Error handling callback: {str(e)}")
