@@ -3,7 +3,7 @@ import json
 import logging
 import httpx
 import base64
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -65,7 +65,7 @@ messages = load_messages()
 
 class SignalRequest(BaseModel):
     signal_data: Dict[str, Any]
-    chat_id: str
+    chat_ids: List[str]
 
 class CalendarRequest(BaseModel):
     message: str
@@ -119,26 +119,33 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send message
-        sent_message = await bot.send_message(
-            chat_id=signal_request.chat_id,
-            text=message,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
-        )
-        
-        # Store original message
-        messages[str(sent_message.message_id)] = {
-            "original_text": message,
-            "text": message,
-            "symbol": signal_request.signal_data["instrument"],
-            "timeframe": signal_request.signal_data["timeframe"]
-        }
+        # Send message to all chat IDs
+        sent_messages = []
+        for chat_id in signal_request.chat_ids:
+            try:
+                sent_message = await bot.send_message(
+                    chat_id=chat_id,
+                    text=message,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                sent_messages.append(sent_message)
+                
+                # Store original message
+                messages[str(sent_message.message_id)] = {
+                    "original_text": message,
+                    "text": message,
+                    "symbol": signal_request.signal_data["instrument"],
+                    "timeframe": signal_request.signal_data["timeframe"]
+                }
+            except Exception as e:
+                logger.error(f"Error sending to chat {chat_id}: {str(e)}")
+                continue
         
         # Save messages to file
         save_messages(messages)
         
-        return {"status": "success", "message": "Signal sent successfully"}
+        return {"status": "success", "message": f"Signal sent to {len(sent_messages)} chats"}
         
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
