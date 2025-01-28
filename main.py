@@ -1,18 +1,18 @@
-# Initialize FastAPI app
-app = FastAPI()
-
 import os
 import json
 import logging
 import httpx
 import base64
+import traceback
+import uuid
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, constants, Message
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
-import traceback
-import uuid
+
+# Initialize FastAPI app
+app = FastAPI()
 
 # Setup logging
 logging.basicConfig(
