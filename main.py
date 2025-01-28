@@ -150,9 +150,12 @@ async def send_calendar(calendar_request: CalendarRequest) -> dict:
     try:
         logger.info(f"Sending calendar message to chat {calendar_request.chat_id}")
         
+        # Convert chat_id string to integer
+        chat_id = int(calendar_request.chat_id)
+        
         # Send message
         message = await bot.send_message(
-            chat_id=calendar_request.chat_id,
+            chat_id=chat_id,
             text=calendar_request.message,
             parse_mode=calendar_request.parse_mode
         )
