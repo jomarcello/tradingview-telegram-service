@@ -33,8 +33,13 @@ app = FastAPI()
 BOT_TOKEN = "7583525993:AAFp90r7UqCY2KdGufKgHHjjslBy7AnY_Sg"
 bot = Bot(BOT_TOKEN)
 
-# Create application
-application = Application.builder().token(BOT_TOKEN).build()
+# Create application and add handlers
+application = (
+    Application.builder()
+    .token(BOT_TOKEN)
+    .build()
+)
+application.add_handler(CallbackQueryHandler(handle_callback))
 
 # Store original messages
 MESSAGES_FILE = '/tmp/messages.json'
@@ -127,7 +132,6 @@ def format_signal_message(signal_data: Dict[str, Any]) -> str:
         logger.error(f"Error formatting message: {str(e)}")
         return "Error formatting signal message"
 
-@app.post("/send-signal")
 async def send_signal(signal_request: SignalRequest) -> dict:
     """Send a signal to Telegram chat."""
     try:
@@ -169,6 +173,17 @@ async def send_signal(signal_request: SignalRequest) -> dict:
         
     except Exception as e:
         logger.error(f"Error sending signal: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/send-signal")
+async def send_signal_endpoint(signal_request: SignalRequest):
+    """Send a signal to Telegram chat."""
+    try:
+        await send_signal(signal_request)
+        return {"status": "success", "message": "Signal sent successfully"}
+    except Exception as e:
+        logger.error(f"Error sending signal: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/send-calendar")
@@ -323,6 +338,22 @@ async def handle_callback(query: CallbackQuery):
         logger.error(f"Error handling callback: {str(e)}")
         await query.message.reply_text("❌ An error occurred. Please try again later.")
 
+@app.post("/telegram-webhook")
+async def telegram_webhook(request: Request):
+    """Handle Telegram webhook updates"""
+    try:
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        
+        # Process the update
+        await application.process_update(update)
+        
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error processing webhook update: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
+
 @app.on_event("startup")
 async def startup():
     """Set webhook on startup"""
@@ -348,18 +379,6 @@ async def shutdown():
         logger.info("Telegram bot stopped successfully")
     except Exception as e:
         logger.error(f"Error stopping Telegram bot: {str(e)}")
-
-@app.post("/telegram-webhook")
-async def telegram_webhook(request: Request):
-    """Handle Telegram webhook updates"""
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot)
-        await application.process_update(update)
-        return {"status": "ok"}
-    except Exception as e:
-        logger.error(f"Error processing webhook update: {str(e)}")
-        return {"status": "error", "message": str(e)}
 
 @app.get("/logs")
 async def get_logs():
