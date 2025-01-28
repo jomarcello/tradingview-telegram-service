@@ -135,8 +135,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chart_service_url = "https://tradingview-chart-service-production.up.railway.app/chart"
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     try:
+                        # Get timeframe from message data
+                        timeframe = message_data.get('timeframe', '15m')
+                        
+                        # Get chart
                         response = await client.get(
-                            f"{chart_service_url}?symbol={message_data['symbol']}&interval={message_data['timeframe']}"
+                            f"{chart_service_url}?symbol={message_data['symbol']}&interval={timeframe}"
                         )
                         response.raise_for_status()
                         
